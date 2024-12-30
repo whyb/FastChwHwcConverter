@@ -15,7 +15,7 @@ if(OpenMP_CXX_FOUND)
 endif()
 
 # Add the executable
-add_executable(example example.cpp)
+add_executable(example FastChwHwcConverter.hpp example.cpp)
 
 # Include directories
 target_include_directories(example PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})

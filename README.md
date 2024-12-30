@@ -86,12 +86,13 @@ int main() {
     const size_t w = 1920;
     const size_t h = 1080;
 
-    // step 1. Defining input and output data
-    std::vector<uint8_t> src_uint8(h * w * ch); // Source data(hwc)
-    std::vector<float> src_float(h * w * ch); // Source data(chw)
+    // step 1. Defining input and output 
+    const size_t pixel_size = h * w * ch;
+    std::vector<uint8_t> src_uint8(pixel_size); // Source data(hwc)
+    std::vector<float> src_float(pixel_size); // Source data(chw)
 
-    std::vector<float> out_float(ch * w * h); // Inference output data(chw)
-    std::vector<uint8_t> out_uint8(ch * w * h); // Inference output data(hwc)
+    std::vector<float> out_float(pixel_size); // Inference output data(chw)
+    std::vector<uint8_t> out_uint8(pixel_size); // Inference output data(hwc)
 
     // step 2. Load image data to src_uint8(8U3C)
 
