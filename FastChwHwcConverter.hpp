@@ -6,6 +6,10 @@
 #include <functional>
 #include <limits>
 
+#ifdef _OPENMP
+#include <omp.h>
+#endif
+
 namespace whyb {
 
 /**
@@ -81,6 +85,25 @@ inline void hwc2chw(
             }
         }
     }
+
+#ifdef _OPENMP
+    const size_t hw_stride = w * h;
+    const size_t num_threads = omp_get_max_threads();
+    const size_t chunk_size = hw_stride / num_threads;
+    #pragma omp parallel
+    {
+        const size_t thread_id = omp_get_thread_num();
+        const size_t start_idx = thread_id * chunk_size;
+        const size_t end_idx = (thread_id == num_threads - 1) ? hw_stride : (start_idx + chunk_size);
+        size_t index = start_idx * ch;
+        for (size_t s = start_idx; s < end_idx; ++s) {
+            size_t stride_index = s;
+            for (size_t c = 0UL; c < ch; ++c, stride_index += hw_stride) {
+                dst[stride_index] = cvt_fun(src[index++]);
+            }
+        }
+    }
+#else
     size_t index = 0UL;
     const size_t hw_stride = w * h;
     for (size_t s = 0UL; s < hw_stride; ++s) {
@@ -89,6 +112,7 @@ inline void hwc2chw(
             dst[stride_index] = cvt_fun(src[index++]);
         }
     }
+#endif
 }
 
 
@@ -127,6 +151,25 @@ inline void chw2hwc(
             cvt_fun = [&alpha](Stype& src_val){return static_cast<Dtype>(src_val * alpha);};
         }
     }
+
+#ifdef _OPENMP
+    const size_t hw_stride = w * h;
+    const size_t num_threads = omp_get_max_threads();
+    const size_t chunk_size = hw_stride / num_threads;
+    #pragma omp parallel
+    {
+        const size_t thread_id = omp_get_thread_num();
+        const size_t start_idx = thread_id * chunk_size;
+        const size_t end_idx = (thread_id == num_threads - 1) ? hw_stride : (start_idx + chunk_size);
+        size_t index = start_idx * ch;
+        for (size_t s = start_idx; s < end_idx; ++s) {
+            size_t stride_index = s;
+            for (size_t c = 0UL; c < ch; ++c, stride_index += hw_stride) {
+                dst[index++] = cvt_fun(src[stride_index]);
+            }
+        }
+    }
+#else
     size_t index = 0UL;
     const size_t hw_stride = w * h;
     for (size_t s = 0UL; s < hw_stride; ++s) {
@@ -135,6 +178,7 @@ inline void chw2hwc(
             dst[index++] = cvt_fun(src[stride_index]);
         }
     }
+#endif
 }
 
 }
