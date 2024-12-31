@@ -1,5 +1,6 @@
 #include <chrono>
 #include <iostream>
+#include <iomanip>
 #include <vector>
 #include <utility>
 
@@ -41,17 +42,19 @@ int main() {
                 whyb::hwc2chw<uint8_t, float>(channel, width, height, (uint8_t*)src_uint8.data(), (float*)src_float.data());
             }
             auto endTime = std::chrono::high_resolution_clock::now();
-            auto hwc2chwDuration = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime) / TEST_COUNT;
+            auto hwc2chwDuration = std::chrono::duration_cast<std::chrono::microseconds>(endTime - startTime) / double(TEST_COUNT);
 
             startTime = std::chrono::high_resolution_clock::now();
             for (size_t i = 0; i < TEST_COUNT; ++i) {
                 whyb::chw2hwc<float, uint8_t>(channel, width, height, (float*)out_float.data(), (uint8_t*)out_uint8.data());
             }
             endTime = std::chrono::high_resolution_clock::now();
-            auto chw2hwcDuration = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime) / TEST_COUNT;
+            auto chw2hwcDuration = std::chrono::duration_cast<std::chrono::microseconds>(endTime - startTime) / double(TEST_COUNT);
 
             std::cout << width << ",\t" << height << ",\t" << channel << ",\t"
-                << hwc2chwDuration.count() << "ms,\t" << chw2hwcDuration.count() << "ms" << std::endl << std::flush;
+                << std::fixed << std::setprecision(3)
+                << hwc2chwDuration.count() / 1000.0 << "ms,\t"
+                << chw2hwcDuration.count() / 1000.0 << "ms" << std::endl << std::flush;
         }
     }
     
