@@ -121,7 +121,7 @@ inline void hwc2chw(
     for (size_t s = 0UL; s < hw_stride; ++s) {
         size_t stride_index = s;
         for (size_t c = 0UL; c < ch; ++c, stride_index += hw_stride) {
-            dst[stride_index] = cvt_fun(src[index++]);
+            dst[stride_index] = cvt_fun(src[index++], c);
         }
     }
 #endif
@@ -187,7 +187,7 @@ inline void chw2hwc(
     for (size_t s = 0UL; s < hw_stride; ++s) {
         size_t stride_index = s;
         for (size_t c = 0UL; c < ch; ++c, stride_index += hw_stride) {
-            dst[index++] = cvt_fun(src[stride_index]);
+            dst[index++] = cvt_fun(src[stride_index], c);
         }
     }
 #endif

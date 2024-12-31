@@ -1,12 +1,14 @@
 # FastChwHwcConverter
 
 ## Overview
-FastChwHwcConverter is a high-performance, multi-thread, header-only C++ library for converting image data formats between HWC (Height, Width, Channels) and CHW (Channels, Height, Width). The library leverages OpenMP parallel processing to provide lightning-fast performance.
+FastChwHwcConverter is a high-performance, multi-thread, header-only C++ library for converting image data formats between **HWC (Height, Width, Channels)** and **CHW (Channels, Height, Width)**. The library leverages OpenMP parallel processing to provide lightning-fast performance.
+
+Any similar type conversion code you find another project on GitHub will most likely only achieve performance close to the speed of [single-thread execution](#benchmark-performance-timing-results).
 
 ## Features
 - **High-Performance**: Utilizes OpenMP for parallel processing. Make full use of CPU multi-core features.
-- **Header-Only**: Include **ONLY** a single header file. Easy to integrate into your C/C++ project.
-- **Flexible**: Supports scaling, clamping, and normalization of image data.
+- **Header-Only**: Include **ONLY** a single header file. Easy to integrate into your C/C++ project. [example](#example).
+- **Flexible**: Supports scaling, clamping, and normalization of image data, any data type.
 
 ## Installation
 Simply include the header file `FastChwHwcConverter.hpp` in your project:
@@ -108,6 +110,41 @@ int main() {
     return 0;
 }
 ```
+
+## Benchmark Performance Timing Results
+
+The table below shows the benchmark performance timing for different image dimensions, channels, and processing configurations.
+
+CPU: Intel(R) Core(TM) i7-13700K
+RAM: DDR5 2400MHz 4x32-bit channels
+
+|       |        |         | single-thread | single-thread | multi-thread | multi-thread |
+|-------|--------|---------|---------------|---------------|--------------|--------------|
+| Width | Height | Channel | hwc2chw       | chw2hwc       | hwc2chw      | chw2hwc      |
+| 426   | 240    | 1       | 0ms           | 0ms           | 0ms          | 0ms          |
+| 426   | 240    | 3       | 0ms           | 0ms           | 0ms          | 0ms          |
+| 426   | 240    | 4       | 0ms           | 0ms           | 0ms          | 0ms          |
+| 640   | 360    | 1       | 0ms           | 0ms           | 0ms          | 0ms          |
+| 640   | 360    | 3       | 0ms           | 0ms           | 0ms          | 0ms          |
+| 640   | 360    | 4       | 0ms           | 0ms           | 0ms          | 0ms          |
+| 854   | 480    | 1       | 0ms           | 0ms           | 0ms          | 0ms          |
+| 854   | 480    | 3       | 1ms           | 1ms           | 0ms          | 0ms          |
+| 854   | 480    | 4       | 1ms           | 1ms           | 0ms          | 0ms          |
+| 1280  | 720    | 1       | 0ms           | 1ms           | 0ms          | 0ms          |
+| 1280  | 720    | 3       | 2ms           | 2ms           | 0ms          | 0ms          |
+| 1280  | 720    | 4       | 3ms           | 3ms           | 0ms          | 0ms          |
+| 1920  | 1080   | 1       | 1ms           | 2ms           | 0ms          | 0ms          |
+| 1920  | 1080   | 3       | 6ms           | 6ms           | 0ms          | 0ms          |
+| 1920  | 1080   | 4       | 8ms           | 8ms           | 1ms          | 1ms          |
+| 2560  | 1440   | 1       | 3ms           | 3ms           | 0ms          | 0ms          |
+| 2560  | 1440   | 3       | 11ms          | 11ms          | 1ms          | 1ms          |
+| 2560  | 1440   | 4       | 14ms          | 14ms          | 2ms          | 1ms          |
+| 3840  | 2160   | 1       | 7ms           | 8ms           | 0ms          | 1ms          |
+| 3840  | 2160   | 3       | 25ms          | 25ms          | 5ms          | 3ms          |
+| 3840  | 2160   | 4       | 32ms          | 32ms          | 6ms          | 4ms          |
+| 7680  | 4320   | 1       | 31ms          | 35ms          | 5ms          | 4ms          |
+| 7680  | 4320   | 3       | 102ms         | 101ms         | 19ms         | 13ms         |
+| 7680  | 4320   | 4       | 129ms         | 126ms         | 25ms         | 20ms         |
 
 ## Contact
 For any questions or suggestions, please open an issue or contact the maintainer.
