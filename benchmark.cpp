@@ -3,7 +3,7 @@
 #include <vector>
 #include <utility>
 
-#undef _OPENMP // If you want to test single-threading. Then enable(undef) it.
+//#undef _OPENMP // If you want to test single-threading. Then enable(undef) it.
 #include "FastChwHwcConverter.hpp"
 
 #define TEST_COUNT 10
