@@ -5,6 +5,57 @@ FastChwHwcConverter is a high-performance, multi-thread, header-only C++ library
 
 Any similar type conversion code you find another project on GitHub will most likely only achieve performance close to the speed of [single-thread execution](#benchmark-performance-timing-results).
 
+## Table of Contents
+- [Overview](#overview)
+- [The difference between CHW and HWC](#the-difference-between-chw-and-hwc)
+  - [CHW Format](#chw-format)
+  - [HWC Format](#hwc-format)
+- [Why Convert Between HWC and CHW Formats?](#why-convert-between-hwc-and-chw-formats)
+- [Features](#features)
+- [Installation](#installation)
+- [Requirements](#requirements)
+- [Let's Converter](#lets-converter)
+  - [HWC to CHW Conversion](#hwc-to-chw-conversion)
+  - [CHW to HWC Conversion](#chw-to-hwc-conversion)
+  - [Example](#example)
+- [Benchmark Performance Timing Results](#benchmark-performance-timing-results)
+- [Contact](#contact)
+
+## The difference between CHW and HWC
+Let's consider a 2x2 image with three channels (RGB).
+* Example Image Data:
+    ```
+    Pixel 1 (R, G, B)    Pixel 2 (R, G, B)
+    Pixel 3 (R, G, B)    Pixel 4 (R, G, B)
+    ```
+    We can store this image data in two different formats: CHW (Channel-Height-Width) and HWC (Height-Width-Channel).
+
+### CHW Format
+**CHW Format**: In this format, the data is stored channel by channel. First, all the red channel data, then all the green channel data, and finally all the blue channel data.
+
+For example (2x2 RGB Image):
+```
+RRRRGGGGBBBB
+```
+Mapping to the actual pixel positions:
+```
+R1, R2, R3, R4, G1, G2, G3, G4, B1, B2, B3, B4
+```
+### HWC Format
+**HWC Format**: In this format, the data is stored by each pixel's channels in sequence. So, the RGB data for each pixel is stored together.
+
+For example (2x2 RGB Image):
+```
+RGBRGBRGBRGB
+```
+Mapping to the actual pixel positions:
+```
+(R1, G1, B1), (R2, G2, B2), (R3, G3, B3), (R4, G4, B4)
+```
+
+## Why Convert Between HWC and CHW Formats?
+The conversion between HWC (Height-Width-Channel) and CHW (Channel-Height-Width) formats is crucial for optimizing image processing tasks. Different machine learning frameworks and libraries have varying data format preferences. For instance, many deep learning frameworks, such as PyTorch, prefer the CHW format, while libraries like OpenCV often use the HWC format. By converting between these formats, we ensure compatibility and efficient data handling, enabling seamless transitions between different processing pipelines and maximizing performance for specific tasks. This flexibility enhances the overall efficiency and effectiveness of image processing and machine learning workflows.
+
 ## Features
 - **High-Performance**: Utilizes OpenMP for parallel processing. Make full use of CPU multi-core features.
 - **Header-Only**: Include **ONLY** a single header file. Easy to integrate into your C/C++ project. [example](#example).
@@ -20,6 +71,7 @@ Simply include the header file `FastChwHwcConverter.hpp` in your project:
 ## Requirements
 * C++11 or later
 * OpenMP support (optional but recommended for high performance)
+* CMake v3.10 or later (optional)
 
 ## Let's Converter
 
