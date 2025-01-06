@@ -70,8 +70,9 @@ Simply include the header file `FastChwHwcConverter.hpp` in your project:
 
 ## Requirements
 * C++11 or later
-* OpenMP support (optional but recommended for high performance)
+* OpenMP support (optional, set USE_OPENMP to ON for high performance)
 * CMake v3.10 or later (optional)
+* OpenCV v4.0 or later (optional, if BUILD_EXAMPLE_OPENCV is ON)
 
 ## Let's Converter
 
@@ -131,6 +132,8 @@ Parameters:
 
 
 ### Example
+This example code(**test/example.cpp**) demonstrates how to use the FastChwHwcConverter library to convert image data from HWC format to CHW format, and then back to HWC format after AI inference.
+
 ```cpp
 #include "FastChwHwcConverter.hpp"
 #include <vector>
@@ -162,6 +165,7 @@ int main() {
     return 0;
 }
 ```
+If you are using OpenCV's `cv::Mat`, please refer to the **test/example-opencv.cpp** file.
 
 ## Benchmark Performance Timing Results
 
