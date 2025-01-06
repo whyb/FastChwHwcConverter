@@ -80,10 +80,10 @@ The `hwc2chw` function converts image data from HWC format to CHW format.
 ```cpp
 template <typename Stype, typename Dtype>
 void hwc2chw(
-    const size_t ch, const size_t w, const size_t h,
+    const size_t h, const size_t w, const size_t c,
     const Stype* src, Dtype* dst,
-    const Dtype alpha = 1, const bool clamp = false,
-    const Dtype min_v = 0.0, const Dtype max_v = 1.0,
+    const Dtype alpha = 1, 
+    const bool clamp = false, const Dtype min_v = 0.0, const Dtype max_v = 1.0,
     const bool normalized_mean_stds = false,
     const std::array<float, 3> mean = { 0.485, 0.456, 0.406 },
     const std::array<float, 3> stds = { 0.229, 0.224, 0.225 }
@@ -92,9 +92,9 @@ void hwc2chw(
 
 Parameters:
 
-* `ch`: Number of channels.
-* `w`: Width of the image.
 * `h`: Height of the image.
+* `w`: Width of the image.
+* `c`: Number of channels.
 * `src`: Pointer to the source data in HWC format.
 * `dst`: Pointer to the destination data in CHW format.
 * `alpha`: Scaling factor (default is 1).
@@ -111,17 +111,17 @@ The `chw2hwc` function converts image data from CHW format to HWC format.
 ```cpp
 template <typename Stype, typename Dtype>
 void chw2hwc(
-    const size_t ch, const size_t w, const size_t h, 
+    const size_t c, const size_t h, const size_t w,
     const Stype* src, Dtype* dst, 
-    const double alpha = 1, const bool clamp = false,
-    const Dtype min_v = 0, const Dtype max_v = 255
+    const Dtype alpha = 1, 
+    const bool clamp = false, const Dtype min_v = 0, const Dtype max_v = 255
 );
 ```
 Parameters:
 
-* `ch`: Number of channels.
-* `w`: Width of the image.
+* `c`: Number of channels.
 * `h`: Height of the image.
+* `w`: Width of the image.
 * `src`: Pointer to the source data in CHW format.
 * `dst`: Pointer to the destination data in HWC format.
 * `alpha`: Scaling factor (default is 1).
@@ -136,12 +136,12 @@ Parameters:
 #include <vector>
 
 int main() {
-    const size_t ch = 3;
+    const size_t c = 3;
     const size_t w = 1920;
     const size_t h = 1080;
 
     // step 1. Defining input and output 
-    const size_t pixel_size = h * w * ch;
+    const size_t pixel_size = h * w * c;
     std::vector<uint8_t> src_uint8(pixel_size); // Source data(hwc)
     std::vector<float> src_float(pixel_size); // Source data(chw)
 
@@ -151,13 +151,13 @@ int main() {
     // step 2. Load image data to src_uint8(8U3C)
 
     // step 3. Convert HWC(Height, Width, Channels) to CHW(Channels, Height, Width)
-    whyb::hwc2chw<uint8_t, float>(ch, w, h, (uint8_t*)src_uint8.data(), (float*)src_float.data());
+    whyb::hwc2chw<uint8_t, float>(h, w, c, (uint8_t*)src_uint8.data(), (float*)src_float.data());
 
     // step 4. Do AI inference
     // input: src_float ==infer==> output: out_float
 
     // step 5. Convert CHW(Channels, Height, Width) to HWC(Height, Width, Channels)
-    whyb::chw2hwc<float, uint8_t>(ch, w, h, (float*)out_float.data(), (uint8_t*)out_uint8.data());
+    whyb::chw2hwc<float, uint8_t>(c, h, w, (float*)out_float.data(), (uint8_t*)out_uint8.data());
 
     return 0;
 }
