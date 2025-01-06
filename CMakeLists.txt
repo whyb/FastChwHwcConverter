@@ -7,25 +7,54 @@ project(FastChwHwcConverter)
 set(CMAKE_CXX_STANDARD 11)
 set(CMAKE_CXX_STANDARD_REQUIRED True)
 
-# Add OpenMP support if available
-find_package(OpenMP)
-if(OpenMP_CXX_FOUND)
-    message(STATUS "Found OpenMP")
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${OpenMP_CXX_FLAGS}")
-    # Apply OpenMP compile options to specific targets
-    set(OpenMP_FLAGS ${OpenMP_CXX_FLAGS})
+# Add CMake option to control OpenMP usage 
+option(USE_OPENMP "Use OpenMP for parallel programming" ON)
+
+# Add CMake options to control project generation
+option(BUILD_EXAMPLE "Build example target" ON)
+option(BUILD_BENCHMARK "Build benchmark target" ON)
+option(BUILD_EXAMPLE_OPENCV "Build example-opencv target" OFF)
+
+# Check for OpenMP support if the option is enabled
+if(USE_OPENMP)
+    find_package(OpenMP)
+    if(OpenMP_CXX_FOUND)
+        message(STATUS "Found OpenMP")
+        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${OpenMP_CXX_FLAGS}")
+        set(OpenMP_FLAGS ${OpenMP_CXX_FLAGS})
+    else()
+        set(OpenMP_FLAGS "")
+    endif()
 else()
     set(OpenMP_FLAGS "")
 endif()
 
-# Add executable targets
-add_executable(example FastChwHwcConverter.hpp example.cpp)
-add_executable(benchmark FastChwHwcConverter.hpp benchmark.cpp)
+# Define macro _OPENMP if OpenMP is enabled
+if(USE_OPENMP AND OpenMP_CXX_FOUND)
+    add_definitions(-D_OPENMP)
+endif()
 
-# Include directories for targets
-target_include_directories(example PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-target_include_directories(benchmark PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+# Find OpenCV library
+if(BUILD_EXAMPLE_OPENCV)
+    find_package(OpenCV REQUIRED)
+endif()
 
-# Set compile options for targets
-target_compile_options(example PRIVATE ${OpenMP_FLAGS})
-target_compile_options(benchmark PRIVATE ${OpenMP_FLAGS})
+# Add executable targets based on options
+if(BUILD_EXAMPLE)
+    add_executable(example FastChwHwcConverter.hpp test/example.cpp)
+    target_include_directories(example PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_compile_options(example PRIVATE ${OpenMP_FLAGS})
+endif()
+
+if(BUILD_BENCHMARK)
+    add_executable(benchmark FastChwHwcConverter.hpp test/benchmark.cpp)
+    target_include_directories(benchmark PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_compile_options(benchmark PRIVATE ${OpenMP_FLAGS})
+endif()
+
+if(BUILD_EXAMPLE_OPENCV)
+    add_executable(example-opencv FastChwHwcConverter.hpp test/example-opencv.cpp)
+    target_include_directories(example-opencv PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${OpenCV_INCLUDE_DIRS})
+    target_link_libraries(example-opencv PRIVATE ${OpenCV_LIBS})
+    target_compile_options(example-opencv PRIVATE ${OpenMP_FLAGS})
+endif()

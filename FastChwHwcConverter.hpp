@@ -81,8 +81,8 @@ template <typename Stype, typename Dtype>
 inline void hwc2chw(
     const size_t h, const size_t w, const size_t c,
     const Stype* src, Dtype* dst,
-    const Dtype alpha = 1, const bool clamp = false,
-    const Dtype min_v = 0.0, const Dtype max_v = 1.0,
+    const Dtype alpha = 1, 
+    const bool clamp = false, const Dtype min_v = 0.0, const Dtype max_v = 1.0,
     const bool normalized_mean_stds = false,
     const std::array<float, 3> mean = { 0.485, 0.456, 0.406 },
     const std::array<float, 3> stds = { 0.229, 0.224, 0.225 }) {
@@ -166,8 +166,8 @@ template <typename Stype, typename Dtype>
 inline void chw2hwc(
     const size_t c, const size_t h, const size_t w,
     const Stype* src, Dtype* dst, 
-    const Dtype alpha = 1, const bool clamp = false,
-    const Dtype min_v = 0, const Dtype max_v = 255) {
+    const Dtype alpha = 1, 
+    const bool clamp = false, const Dtype min_v = 0, const Dtype max_v = 255) {
     std::function<Dtype(const Stype&, const size_t&)> cvt_fun;
     if(clamp) {
         if(is_number_equal<Dtype>(alpha, 1)) {
