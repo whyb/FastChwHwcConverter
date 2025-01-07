@@ -5,24 +5,25 @@ on:
     branches: 
     - main
     - test-ci
-    
 
 jobs:
   build-linux:
     runs-on: ubuntu-latest
-
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v2
+    - name: Checkout
+      uses: actions/checkout@v2.0.0
+    - name: Build project
+      uses: nicledomaS/cmake_build_action@v1.4
+      with:
+        submodule_update: ON
+        run_tests: ON
+        unit_test_build: -Dtest=ON
 
     - name: Install dependencies
       run: |
         sudo apt-get update
         sudo apt-get install -y libomp-dev
         sudo apt-get install -y libopencv-dev
-
-    - name: Set up CMake
-      uses: actions/setup-cmake@v1
 
     - name: Configure CMake
       run: cmake -S . -B build
@@ -41,36 +42,3 @@ jobs:
     - name: Run example-opencv tests
       if: env.BUILD_EXAMPLE_OPENCV == 'ON'
       run: build/example-opencv
-
-  build-windows:
-    runs-on: windows-latest
-
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v2
-
-    - name: Install dependencies
-      run: |
-        choco install openmp --version=11.0
-        choco install opencv --version=4.10.0
-
-    - name: Set up CMake
-      uses: actions/setup-cmake@v1
-
-    - name: Configure CMake
-      run: cmake -S . -B build
-
-    - name: Build
-      run: cmake --build build --config Release
-
-    - name: Run example tests
-      if: env.BUILD_EXAMPLE == 'ON'
-      run: build\Release\example.exe
-
-    - name: Run benchmark tests
-      if: env.BUILD_BENCHMARK == 'ON'
-      run: build\Release\benchmark.exe
-
-    - name: Run example-opencv tests
-      if: env.BUILD_EXAMPLE_OPENCV == 'ON'
-      run: build\Release\example-opencv.exe
