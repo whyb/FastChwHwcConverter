@@ -12,8 +12,6 @@ jobs:
     steps:
     - name: Checkout
       uses: actions/checkout@v2.0.0
-    - name: Build project
-      uses: nicledomaS/cmake_build_action@v1.4
       with:
         submodule_update: ON
         run_tests: ON
@@ -22,23 +20,51 @@ jobs:
     - name: Install dependencies
       run: |
         sudo apt-get update
+        sudo apt-get cmake
         sudo apt-get install -y libomp-dev
         sudo apt-get install -y libopencv-dev
 
     - name: Configure CMake
-      run: cmake -S . -B build
+      run: cmake -S . -B build -DBUILD_EXAMPLE:BOOL="1" -DBUILD_EXAMPLE_OPENCV:BOOL="1" -DBUILD_BENCHMARK:BOOL="1" -DUSE_OPENMP:BOOL="1" 
 
     - name: Build
-      run: cmake --build build
+      run: cmake --build build --config Release
 
     - name: Run example tests
-      if: env.BUILD_EXAMPLE == 'ON'
-      run: build/example
+      run: build/Release/example
 
     - name: Run benchmark tests
-      if: env.BUILD_BENCHMARK == 'ON'
-      run: build/benchmark
+      run: build/Release/benchmark
 
     - name: Run example-opencv tests
-      if: env.BUILD_EXAMPLE_OPENCV == 'ON'
-      run: build/example-opencv
+      run: build/Release/example-opencv
+
+
+  build-windows:
+    runs-on: windows-latest
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v2.0.0
+
+    - name: Setup MSVC Developer Command Prompt
+      uses: TheMrMilchmann/setup-msvc-dev@v3.0.1
+  
+    - name: Install dependencies
+      run: |
+        choco install cmake --version=3.31.3
+        choco install opencv --version=4.10.0
+
+    - name: CMake Configure & Generate
+      run: cmake -S . -B build -DBUILD_EXAMPLE:BOOL="1" -DBUILD_EXAMPLE_OPENCV:BOOL="1" -DBUILD_BENCHMARK:BOOL="1" -DUSE_OPENMP:BOOL="1" 
+
+    - name: Build
+      run: cmake --build build --config Release
+
+    - name: Run example tests
+      run: build\Release\example.exe
+
+    - name: Run benchmark tests
+      run: build\Release\benchmark.exe
+
+    - name: Run example-opencv tests
+      run: build\Release\example-opencv.exe

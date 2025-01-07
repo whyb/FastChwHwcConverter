@@ -1,6 +1,7 @@
 #include "FastChwHwcConverter.hpp"
 #include <opencv2/opencv.hpp>
 #include <cstdint>
+#include <iostream>
 
 int main() {
     const size_t c = 3;
@@ -26,5 +27,6 @@ int main() {
     // step 5. Convert CHW(Channels, Height, Width) to HWC(Height, Width, Channels)
     whyb::chw2hwc<float, uint8_t>(c, h, w, (float*)out_float_mat.data, (uint8_t*)out_uint8_mat.data);
 
+    std::cout << "done" << std::endl;
     return 0;
 }
