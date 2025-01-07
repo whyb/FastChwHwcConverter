@@ -1,5 +1,6 @@
 #include "FastChwHwcConverter.hpp"
 #include <opencv2/opencv.hpp>
+#include <cstdint>
 
 int main() {
     const size_t c = 3;

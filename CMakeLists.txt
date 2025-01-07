@@ -7,10 +7,10 @@ project(FastChwHwcConverter)
 set(CMAKE_CXX_STANDARD 11)
 set(CMAKE_CXX_STANDARD_REQUIRED True)
 
-# Add CMake option to control OpenMP usage 
+# CMake option to control OpenMP usage 
 option(USE_OPENMP "Use OpenMP for parallel programming" ON)
 
-# Add CMake options to control project generation
+# CMake options to control project generation
 option(BUILD_EXAMPLE "Build example target" ON)
 option(BUILD_BENCHMARK "Build benchmark target" ON)
 option(BUILD_EXAMPLE_OPENCV "Build example-opencv target" OFF)
@@ -27,11 +27,6 @@ if(USE_OPENMP)
     endif()
 else()
     set(OpenMP_FLAGS "")
-endif()
-
-# Define macro _OPENMP if OpenMP is enabled
-if(USE_OPENMP AND OpenMP_CXX_FOUND)
-    add_definitions(-D_OPENMP)
 endif()
 
 # Find OpenCV library
