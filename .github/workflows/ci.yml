@@ -24,7 +24,7 @@ jobs:
         sudo apt-get install -y libomp-dev
         sudo apt-get install -y libopencv-dev
 
-    - name: Configure CMake
+    - name: CMake Configure & Generate
       run: cmake -S . -B build -DBUILD_EXAMPLE:BOOL="1" -DBUILD_EXAMPLE_OPENCV:BOOL="1" -DBUILD_BENCHMARK:BOOL="1" -DUSE_OPENMP:BOOL="1" 
 
     - name: Build
@@ -69,4 +69,6 @@ jobs:
       run: build\Release\benchmark.exe
 
     - name: Run example-opencv tests
-      run: build\Release\example-opencv.exe
+      run: |
+        setx PATH "%PATH%;C:\tools\opencv\build\x64\vc16\bin"
+        build\Release\example-opencv.exe
