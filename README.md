@@ -1,4 +1,5 @@
 # FastChwHwcConverter
+![CI](https://github.com/whyb/FastChwHwcConverter/workflows/CI/badge.svg)
 
 ## Overview
 FastChwHwcConverter is a high-performance, multi-thread, header-only C++ library for converting image data formats between **HWC (Height, Width, Channels)** and **CHW (Channels, Height, Width)**. The library leverages OpenMP parallel processing to provide lightning-fast performance.
