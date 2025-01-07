@@ -55,7 +55,7 @@ int main() {
             std::cout << width << ",\t" << height << ",\t" << channel << ",\t"
                 << std::fixed << std::setprecision(3)
                 << hwc2chwDuration.count() / 1000.0 << "ms,\t"
-                << chw2hwcDuration.count() / 1000.0 << "ms" << std::endl << std::flush;
+                << chw2hwcDuration.count() / 1000.0 << "ms" << std::endl;
         }
     }
     std::cout << "done" << std::endl;

@@ -172,6 +172,7 @@ If you are using OpenCV's `cv::Mat`, please refer to the **test/example-opencv.c
 The table below shows the benchmark performance timing for different image dimensions, channels, and processing configurations.
 
 CPU: Intel(R) Core(TM) i7-13700K
+
 RAM: DDR5 2400MHz 4x32-bit channels
 
 |       |        |         | single-thread | single-thread | multi-thread | multi-thread |
