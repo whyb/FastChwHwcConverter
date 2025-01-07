@@ -1,5 +1,7 @@
 #include "FastChwHwcConverter.hpp"
 #include <vector>
+#include <cstdint>
+#include <iostream>
 
 int main() {
     const size_t c = 3;
@@ -25,5 +27,6 @@ int main() {
     // step 5. Convert CHW(Channels, Height, Width) to HWC(Height, Width, Channels)
     whyb::chw2hwc<float, uint8_t>(c, h, w, (float*)out_float.data(), (uint8_t*)out_uint8.data());
 
+    std::cout << "done" << std::endl;
     return 0;
 }

@@ -1,4 +1,5 @@
 #include <chrono>
+#include <cstdint>
 #include <iostream>
 #include <iomanip>
 #include <vector>
@@ -57,6 +58,7 @@ int main() {
                 << chw2hwcDuration.count() / 1000.0 << "ms" << std::endl << std::flush;
         }
     }
+    std::cout << "done" << std::endl;
     
     return 0;
 }

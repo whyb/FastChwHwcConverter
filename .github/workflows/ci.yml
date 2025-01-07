@@ -1,0 +1,74 @@
+name: CI
+
+on:
+  push:
+    branches: 
+    - main
+    - test-ci
+
+jobs:
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v2.0.0
+      with:
+        submodule_update: ON
+        run_tests: ON
+        unit_test_build: -Dtest=ON
+
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y cmake
+        sudo apt-get install -y libomp-dev
+        sudo apt-get install -y libopencv-dev
+
+    - name: CMake Configure & Generate
+      run: cmake -S . -B build -DBUILD_EXAMPLE:BOOL="1" -DBUILD_EXAMPLE_OPENCV:BOOL="1" -DBUILD_BENCHMARK:BOOL="1" -DUSE_OPENMP:BOOL="1" 
+
+    - name: Build
+      run: cmake --build build --config Release
+
+    - name: Run example tests
+      run: build/example
+
+    - name: Run benchmark tests
+      run: build/benchmark
+
+    - name: Run example-opencv tests
+      run: build/example-opencv
+
+
+  build-windows:
+    runs-on: windows-latest
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v2.0.0
+
+    - name: Setup MSVC Developer Command Prompt
+      uses: TheMrMilchmann/setup-msvc-dev@v3.0.1
+      with: 
+        arch: x64
+  
+    - name: Install dependencies
+      run: |
+        choco install cmake --version=3.31.3
+        choco install opencv --version=4.10.0
+
+    - name: CMake Configure & Generate
+      run: cmake -S . -B build -DBUILD_EXAMPLE:BOOL="1" -DBUILD_EXAMPLE_OPENCV:BOOL="1" -DBUILD_BENCHMARK:BOOL="1" -DUSE_OPENMP:BOOL="1" -DOpenCV_DIR:PATH="C:\tools\opencv\build"
+
+    - name: Build
+      run: cmake --build build --config Release
+
+    - name: Run example tests
+      run: build\Release\example.exe
+
+    - name: Run benchmark tests
+      run: build\Release\benchmark.exe
+
+    - name: Run example-opencv tests
+      run: |
+        copy C:\tools\opencv\build\x64\vc16\bin\opencv_world4100.dll build\Release\
+        build\Release\example-opencv.exe
