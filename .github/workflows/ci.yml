@@ -70,5 +70,10 @@ jobs:
 
     - name: Run example-opencv tests
       run: |
+        dir C:\tools\opencv\build
+        dir C:\tools\opencv\build\x64
+        dir C:\tools\opencv\build\x64\vc16
+        dir C:\tools\opencv\build\x64\vc16\bin
         setx PATH "%PATH%;C:\tools\opencv\build\x64\vc16\bin"
+        refreshenv
         build\Release\example-opencv.exe
