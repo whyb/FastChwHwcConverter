@@ -31,13 +31,13 @@ jobs:
       run: cmake --build build --config Release
 
     - name: Run example tests
-      run: build/Release/example
+      run: build/example
 
     - name: Run benchmark tests
-      run: build/Release/benchmark
+      run: build/benchmark
 
     - name: Run example-opencv tests
-      run: build/Release/example-opencv
+      run: build/example-opencv
 
 
   build-windows:
