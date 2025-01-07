@@ -55,6 +55,17 @@ jobs:
       run: |
         choco install cmake --version=3.31.3
         choco install opencv --version=4.10.0
+        dir C:\tools\
+        dir C:\tools\opencv\
+        dir C:\tools\opencv\bin
+
+    - name: Set environment variables
+      run: |
+        $opencvPath = "C:\tools\opencv"
+        [System.Environment]::SetEnvironmentVariable("OPENCV_DIR", $opencvPath, [System.EnvironmentVariableTarget]::Process)
+        [System.Environment]::SetEnvironmentVariable("CMAKE_PREFIX_PATH", "$opencvPath", [System.EnvironmentVariableTarget]::Process)
+        $env:Path += ";$opencvPath\x64\vc15\bin"
+        refreshenv
 
     - name: CMake Configure & Generate
       run: cmake -S . -B build -DBUILD_EXAMPLE:BOOL="1" -DBUILD_EXAMPLE_OPENCV:BOOL="1" -DBUILD_BENCHMARK:BOOL="1" -DUSE_OPENMP:BOOL="1" -DOpenCV_DIR:PATH="C:\tools\opencv\"
