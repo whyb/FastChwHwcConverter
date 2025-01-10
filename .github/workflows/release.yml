@@ -1,0 +1,35 @@
+name: Release CI
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+    branches: 
+    - main
+    - test-ci
+
+jobs:
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+      with:
+        submodule_update: ON
+        run_tests: ON
+        unit_test_build: -Dtest=ON
+    - name: Release
+      uses: softprops/action-gh-release@v2
+
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y cmake
+        sudo apt-get install -y libomp-dev
+        sudo apt-get install -y libopencv-dev
+
+    - name: CMake Configure & Generate
+      run: cmake -S . -B build -DBUILD_EXAMPLE:BOOL="1" -DBUILD_EXAMPLE_OPENCV:BOOL="1" -DBUILD_BENCHMARK:BOOL="1" -DUSE_OPENMP:BOOL="1" 
+
+    - name: Build
+      run: cmake --build build --config Release
