@@ -51,6 +51,10 @@ jobs:
       run: |
         choco install cmake --version=3.31.3
         choco install opencv --version=4.10.0
+        dir C:\tools\
+        dir C:\tools\opencv\
+        dir C:\tools\opencv\build
+        refreshenv
 
     - name: CMake Configure & Generate
       run: cmake -S . -B build -DBUILD_EXAMPLE:BOOL="1" -DBUILD_EXAMPLE_OPENCV:BOOL="1" -DBUILD_BENCHMARK:BOOL="1" -DUSE_OPENMP:BOOL="1" -DOpenCV_DIR:PATH="C:\tools\opencv\build"
