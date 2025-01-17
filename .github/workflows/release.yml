@@ -26,23 +26,35 @@ jobs:
         sudo apt-get install -y libomp-dev
         sudo apt-get install -y libopencv-dev
 
-    - name: CMake Configure & Generate
-      run: cmake -S . -B build -DBUILD_EXAMPLE:BOOL="1" -DBUILD_EXAMPLE_OPENCV:BOOL="1" -DBUILD_BENCHMARK:BOOL="1" -DUSE_OPENMP:BOOL="1" 
+    - name: CMake Configure & Generate(x86)
+      run: cmake -S . -B build-x86- -DBUILD_EXAMPLE:BOOL="1" -DBUILD_EXAMPLE_OPENCV:BOOL="1" -DBUILD_BENCHMARK:BOOL="1" -DUSE_OPENMP:BOOL="1" -DCMAKE_GENERATOR_PLATFORM=x86
 
-    - name: Build
-      run: cmake --build build --config Release
+    - name: Build(x86)
+      run: cmake --build build-x86 --config Release
+
+    - name: CMake Configure & Generate(x64)
+      run: cmake -S . -B build-x64 -DBUILD_EXAMPLE:BOOL="1" -DBUILD_EXAMPLE_OPENCV:BOOL="1" -DBUILD_BENCHMARK:BOOL="1" -DUSE_OPENMP:BOOL="1" -DCMAKE_GENERATOR_PLATFORM=x64
+
+    - name: Build(x64)
+      run: cmake --build build-x64 --config Release
 
     - name: List build folder
-      run: ls ./build/
+      run: |
+        ls ./build-x86/
+        ls ./build-x64/
+
+    - name: Zip binary files
+      run: |
+        zip ./bin-linux-gcc-x86.zip ./build-x86/example ./build-x86/benchmark ./build-x86/example-opencv
+        zip ./bin-linux-gcc-x64.zip ./build-x64/example ./build-x64/benchmark ./build-x64/example-opencv
 
     - name: Archive Linux build artifacts
       uses: actions/upload-artifact@v4
       with:
         name: linux-artifacts
         path: |
-          ./build/example
-          ./build/benchmark
-          ./build/example-opencv
+          ./bin-linux-gcc-x86.zip
+          ./bin-linux-gcc-x64.zip
 
   build-windows:
     runs-on: windows-latest
@@ -53,32 +65,49 @@ jobs:
     - name: Setup MSVC Developer Command Prompt
       uses: TheMrMilchmann/setup-msvc-dev@v3.0.1
       with: 
-        arch: x64
+        arch: |
+          x64
+          amd64_x86
+          amd64_arm
+          amd64_arm64
   
     - name: Install dependencies
       run: |
         choco install cmake --version=3.31.3
         choco install opencv --version=4.10.0
+        choco install zip --version=3.0
 
-    - name: CMake Configure & Generate
-      run: cmake -S . -B build -DBUILD_EXAMPLE:BOOL="1" -DBUILD_EXAMPLE_OPENCV:BOOL="1" -DBUILD_BENCHMARK:BOOL="1" -DUSE_OPENMP:BOOL="1" -DOpenCV_DIR:PATH="C:\tools\opencv\build"
+    - name: CMake Configure & Generate(x86)
+      run: cmake -S . -B build-x86 -DBUILD_EXAMPLE:BOOL="1" -DBUILD_EXAMPLE_OPENCV:BOOL="1" -DBUILD_BENCHMARK:BOOL="1" -DUSE_OPENMP:BOOL="1" -DOpenCV_DIR:PATH="C:\tools\opencv\build-x86" -A Win32 
 
-    - name: Build
-      run: cmake --build build --config Release
+    - name: Build(x86)
+      run: cmake --build build-x86 --config Release
+    
+    - name: CMake Configure & Generate(x64)
+      run: cmake -S . -B build-x64 -DBUILD_EXAMPLE:BOOL="1" -DBUILD_EXAMPLE_OPENCV:BOOL="1" -DBUILD_BENCHMARK:BOOL="1" -DUSE_OPENMP:BOOL="1" -DOpenCV_DIR:PATH="C:\tools\opencv\build-x64" -A x64 
+
+    - name: Build(x64)
+      run: cmake --build build-x64 --config Release
     
     - name: List build folder
       run: |
-        dir .\build\
-        dir .\build\Release\
+        dir .\build-x86\
+        dir .\build-x86\Release\
+        dir .\build-x64\
+        dir .\build-x64\Release\
+
+    - name: Zip binary files
+      run: |
+        zip ./bin-windows-msvc-x86.zip .\build-x86\Release\example.exe .\build-x86\Release\benchmark.exe .\build-x86\Release\example-opencv.exe
+        zip ./bin-windows-msvc-x64.zip .\build-x64\Release\example.exe .\build-x64\Release\benchmark.exe .\build-x64\Release\example-opencv.exe
 
     - name: Archive Windows build artifacts
       uses: actions/upload-artifact@v4
       with:
         name: windows-artifacts
         path: |
-          .\build\Release\example.exe
-          .\build\Release\benchmark.exe
-          .\build\Release\example-opencv.exe
+          ./bin-windows-msvc-x86.zip
+          ./bin-windows-msvc-x64.zip
 
   release:
     needs: [build-linux, build-windows]
