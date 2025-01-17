@@ -36,10 +36,13 @@ jobs:
       run: ls ./build/
 
     - name: Archive Linux build artifacts
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: linux-artifacts
-        path: build/**
+        path: |
+          ./build/example
+          ./build/benchmark
+          ./build/example-opencv
 
   build-windows:
     runs-on: windows-latest
@@ -64,33 +67,36 @@ jobs:
       run: cmake --build build --config Release
     
     - name: List build folder
-      run: dir .\build\
+      run: |
+        dir .\build\
+        dir .\build\Release\
 
     - name: Archive Windows build artifacts
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: windows-artifacts
-        path: build/**
+        path: |
+          .\build\Release\example.exe
+          .\build\Release\benchmark.exe
+          .\build\Release\example-opencv.exe
 
   release:
     needs: [build-linux, build-windows]
     runs-on: ubuntu-latest
     steps:
-    - name: Download Linux artifacts
-      uses: actions/download-artifact@v3
+    - name: Download Linux/Windows artifacts
+      uses: actions/download-artifact@v4
       with:
-        name: linux-artifacts
-
-    - name: Download Windows artifacts
-      uses: actions/download-artifact@v3
-      with:
-        name: windows-artifacts
+        path: ./releasefiles
+        merge-multiple: true
+  
+    - name: Display structure of downloaded files
+      run: ls -R ./releasefiles
 
     - name: Create GitHub Release
       uses: softprops/action-gh-release@v2
       with:
         token: ${{ secrets.GITHUB_TOKEN }}
         files: |
-          linux-artifacts/**
-          windows-artifacts/**
+          ./releasefiles/*
 
