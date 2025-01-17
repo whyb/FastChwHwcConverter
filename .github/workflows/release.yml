@@ -16,14 +16,8 @@ jobs:
   build-linux:
     runs-on: ubuntu-latest
     steps:
-    - name: Checkout
+    - name: Check out the repository
       uses: actions/checkout@v4
-      with:
-        submodule_update: ON
-        run_tests: ON
-        unit_test_build: -Dtest=ON
-    - name: Release
-      uses: softprops/action-gh-release@v2
 
     - name: Install dependencies
       run: |
@@ -38,10 +32,16 @@ jobs:
     - name: Build
       run: cmake --build build --config Release
 
+    - name: Archive Linux build artifacts
+      uses: actions/upload-artifact@v3
+      with:
+        name: linux-artifacts
+        path: build/
+
   build-windows:
     runs-on: windows-latest
     steps:
-    - name: Checkout
+    - name: Check out the repository
       uses: actions/checkout@v4
 
     - name: Setup MSVC Developer Command Prompt
@@ -59,3 +59,32 @@ jobs:
 
     - name: Build
       run: cmake --build build --config Release
+
+    - name: Archive Windows build artifacts
+      uses: actions/upload-artifact@v3
+      with:
+        name: windows-artifacts
+        path: build/
+
+  release:
+    needs: [build-linux, build-windows]
+    runs-on: ubuntu-latest
+    steps:
+    - name: Download Linux artifacts
+      uses: actions/download-artifact@v3
+      with:
+        name: linux-artifacts
+
+    - name: Download Windows artifacts
+      uses: actions/download-artifact@v3
+      with:
+        name: windows-artifacts
+
+    - name: Create GitHub Release
+      uses: softprops/action-gh-release@v2
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+        files: |
+          linux-artifacts/**
+          windows-artifacts/**
+

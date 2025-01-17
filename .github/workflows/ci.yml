@@ -10,7 +10,7 @@ jobs:
   build-linux:
     runs-on: ubuntu-latest
     steps:
-    - name: Checkout
+    - name: Check out the repository
       uses: actions/checkout@v2.0.0
       with:
         submodule_update: ON
@@ -43,7 +43,7 @@ jobs:
   build-windows:
     runs-on: windows-latest
     steps:
-    - name: Checkout
+    - name: Check out the repository
       uses: actions/checkout@v2.0.0
 
     - name: Setup MSVC Developer Command Prompt
