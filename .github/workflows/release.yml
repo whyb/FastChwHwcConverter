@@ -8,6 +8,10 @@ on:
     - main
     - test-ci
 
+permissions:
+  contents: write
+  discussions: write
+
 jobs:
   build-linux:
     runs-on: ubuntu-latest
