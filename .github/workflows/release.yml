@@ -32,11 +32,14 @@ jobs:
     - name: Build
       run: cmake --build build --config Release
 
+    - name: List build folder
+      run: ls ./build/
+
     - name: Archive Linux build artifacts
       uses: actions/upload-artifact@v3
       with:
         name: linux-artifacts
-        path: build/
+        path: build/**
 
   build-windows:
     runs-on: windows-latest
@@ -59,12 +62,15 @@ jobs:
 
     - name: Build
       run: cmake --build build --config Release
+    
+    - name: List build folder
+      run: dir .\build\
 
     - name: Archive Windows build artifacts
       uses: actions/upload-artifact@v3
       with:
         name: windows-artifacts
-        path: build/
+        path: build/**
 
   release:
     needs: [build-linux, build-windows]
