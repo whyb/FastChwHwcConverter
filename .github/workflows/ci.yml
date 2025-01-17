@@ -84,13 +84,9 @@ jobs:
     - name: Install dependencies
       run: |
         choco install cmake --version=3.31.3 -m32
-        choco install opencv --version=4.10.0 -m32
-        dir C:\tools\
-        dir C:\tools\opencv\
-        dir C:\tools\opencv\build
 
     - name: CMake Configure & Generate
-      run: cmake -S . -B build -DBUILD_EXAMPLE:BOOL="1" -DBUILD_EXAMPLE_OPENCV:BOOL="1" -DBUILD_BENCHMARK:BOOL="1" -DUSE_OPENMP:BOOL="1" -DOpenCV_DIR:PATH="C:\tools\opencv\build" -A Win32
+      run: cmake -S . -B build -DBUILD_EXAMPLE:BOOL="1"  -DBUILD_BENCHMARK:BOOL="1" -DUSE_OPENMP:BOOL="1" -A Win32
 
     - name: Build
       run: cmake --build build --config Release
@@ -101,7 +97,35 @@ jobs:
     - name: Run benchmark tests
       run: build\Release\benchmark.exe
 
-    - name: Run example-opencv tests
+
+  build-windows-arm64:
+    runs-on: windows-latest
+    steps:
+    - name: Check out the repository
+      uses: actions/checkout@v4
+
+    - name: Setup MSVC Developer Command Prompt
+      uses: TheMrMilchmann/setup-msvc-dev@v3.0.1
+      with: 
+        arch: amd64_arm64
+
+    - name: Install dependencies
       run: |
-        copy C:\tools\opencv\build\x86\vc16\bin\opencv_world4100.dll build\Release\
-        build\Release\example-opencv.exe
+        choco install cmake --version=3.31.3 -m32
+        choco install opencv --version=4.10.0 --params "/Arch:arm64"
+        dir C:\tools\
+        dir C:\tools\opencv\
+        dir C:\tools\opencv\build
+
+    - name: CMake Configure & Generate
+      run: cmake -S . -B build -DBUILD_EXAMPLE:BOOL="1"  -DBUILD_BENCHMARK:BOOL="1" -DUSE_OPENMP:BOOL="1" -A ARM64
+
+    - name: Build
+      run: cmake --build build --config Release
+
+    - name: Run example tests
+      run: build\Release\example.exe
+
+    - name: Run benchmark tests
+      run: build\Release\benchmark.exe
+
