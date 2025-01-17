@@ -26,12 +26,6 @@ jobs:
         sudo apt-get install -y libomp-dev
         sudo apt-get install -y libopencv-dev
 
-    - name: CMake Configure & Generate(x86)
-      run: cmake -S . -B build-x86- -DBUILD_EXAMPLE:BOOL="1" -DBUILD_EXAMPLE_OPENCV:BOOL="1" -DBUILD_BENCHMARK:BOOL="1" -DUSE_OPENMP:BOOL="1" -DCMAKE_GENERATOR_PLATFORM=x86
-
-    - name: Build(x86)
-      run: cmake --build build-x86 --config Release
-
     - name: CMake Configure & Generate(x64)
       run: cmake -S . -B build-x64 -DBUILD_EXAMPLE:BOOL="1" -DBUILD_EXAMPLE_OPENCV:BOOL="1" -DBUILD_BENCHMARK:BOOL="1" -DUSE_OPENMP:BOOL="1" -DCMAKE_GENERATOR_PLATFORM=x64
 
@@ -39,22 +33,16 @@ jobs:
       run: cmake --build build-x64 --config Release
 
     - name: List build folder
-      run: |
-        ls ./build-x86/
-        ls ./build-x64/
+      run: ls ./build-x64/
 
     - name: Zip binary files
-      run: |
-        zip ./bin-linux-gcc-x86.zip ./build-x86/example ./build-x86/benchmark ./build-x86/example-opencv
-        zip ./bin-linux-gcc-x64.zip ./build-x64/example ./build-x64/benchmark ./build-x64/example-opencv
+      run: zip ./bin-linux-gcc-x64.zip ./build-x64/example ./build-x64/benchmark ./build-x64/example-opencv
 
     - name: Archive Linux build artifacts
       uses: actions/upload-artifact@v4
       with:
         name: linux-artifacts
-        path: |
-          ./bin-linux-gcc-x86.zip
-          ./bin-linux-gcc-x64.zip
+        path: ./bin-linux-gcc-x64.zip
 
   build-windows:
     runs-on: windows-latest
@@ -65,9 +53,7 @@ jobs:
     - name: Setup MSVC Developer Command Prompt
       uses: TheMrMilchmann/setup-msvc-dev@v3.0.1
       with: 
-        arch: |
-          x64
-          x86
+        arch: x64, x86
   
     - name: Install dependencies
       run: |
