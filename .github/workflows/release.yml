@@ -83,8 +83,84 @@ jobs:
         path: |
           ./bin-windows-msvc-x64.zip
 
+  build-windows-x86:
+    runs-on: windows-latest
+    steps:
+    - name: Check out the repository
+      uses: actions/checkout@v4
+
+    - name: Setup MSVC Developer Command Prompt
+      uses: TheMrMilchmann/setup-msvc-dev@v3.0.1
+      with: 
+        arch: amd64_x86
+  
+    - name: Install dependencies
+      run: |
+        choco install cmake --version=3.31.3
+        choco install zip --version=3.0
+    
+    - name: CMake Configure & Generate(x86)
+      run: cmake -S . -B build-x86 -DBUILD_EXAMPLE:BOOL="1" -DBUILD_BENCHMARK:BOOL="1" -DUSE_OPENMP:BOOL="1" -A Win32
+
+    - name: Build(x86)
+      run: cmake --build build-x86 --config Release
+    
+    - name: List build folder
+      run: |
+        dir .\build-x86\
+        dir .\build-x86\Release\
+
+    - name: Zip binary files
+      run: |
+        zip ./bin-windows-msvc-x86.zip .\build-x86\Release\example.exe .\build-x86\Release\benchmark.exe
+
+    - name: Archive Windows build artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: windows-artifacts
+        path: |
+          ./bin-windows-msvc-x86.zip
+
+  build-windows-arm64:
+    runs-on: windows-latest
+    steps:
+    - name: Check out the repository
+      uses: actions/checkout@v4
+
+    - name: Setup MSVC Developer Command Prompt
+      uses: TheMrMilchmann/setup-msvc-dev@v3.0.1
+      with: 
+        arch: amd64_arm64
+  
+    - name: Install dependencies
+      run: |
+        choco install cmake --version=3.31.3
+        choco install zip --version=3.0
+    
+    - name: CMake Configure & Generate(arm64)
+      run: cmake -S . -B build-arm64 -DBUILD_EXAMPLE:BOOL="1" -DBUILD_BENCHMARK:BOOL="1" -DUSE_OPENMP:BOOL="1" -A ARM64
+
+    - name: Build(arm64)
+      run: cmake --build build-arm64 --config Release
+    
+    - name: List build folder
+      run: |
+        dir .\build-arm64\
+        dir .\build-arm64\Release\
+
+    - name: Zip binary files
+      run: |
+        zip ./bin-windows-msvc-arm64.zip .\build-arm64\Release\example.exe .\build-arm64\Release\benchmark.exe
+
+    - name: Archive Windows build artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: windows-artifacts
+        path: |
+          ./bin-windows-msvc-arm64.zip
+
   release:
-    needs: [build-linux-x64, build-windows-x64]
+    needs: [build-linux-x64, build-windows-x64, build-windows-x86, build-windows-arm64]
     runs-on: ubuntu-latest
     steps:
     - name: Download all artifacts

@@ -84,7 +84,6 @@ jobs:
     - name: Install dependencies
       run: |
         choco install cmake --version=3.31.3
-        choco install opencv --version=4.10.0 --params "/Arch:amd64_x86"
         dir C:\tools\
         dir C:\tools\opencv\
         dir C:\tools\opencv\build
@@ -116,7 +115,6 @@ jobs:
     - name: Install dependencies
       run: |
         choco install cmake --version=3.31.3
-        choco install opencv --version=4.10.0 --params "/Arch:arm64"
         dir C:\tools\
         dir C:\tools\opencv\
         dir C:\tools\opencv\build
@@ -126,10 +124,4 @@ jobs:
 
     - name: Build
       run: cmake --build build --config Release
-
-    - name: Run example tests
-      run: build\Release\example.exe
-
-    - name: Run benchmark tests
-      run: build\Release\benchmark.exe
 
