@@ -1,0 +1,181 @@
+name: Release CI
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+    branches: 
+    - main
+    - test-ci
+
+permissions:
+  contents: write
+  discussions: write
+
+jobs:
+  build-linux-x64:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Check out the repository
+      uses: actions/checkout@v4
+
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y cmake
+        sudo apt-get install -y libomp-dev
+        sudo apt-get install -y libopencv-dev
+
+    - name: CMake Configure & Generate(x64)
+      run: cmake -S . -B build-x64 -DBUILD_EXAMPLE:BOOL="1" -DBUILD_EXAMPLE_OPENCV:BOOL="1" -DBUILD_BENCHMARK:BOOL="1" -DUSE_OPENMP:BOOL="1"
+
+    - name: Build(x64)
+      run: cmake --build build-x64 --config Release
+
+    - name: List build folder
+      run: ls ./build-x64/
+
+    - name: Zip binary files
+      run: zip ./bin-linux-gcc-x64.zip ./build-x64/example ./build-x64/benchmark ./build-x64/example-opencv
+
+    - name: Archive Linux build artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: linux-x64-artifacts
+        path: ./bin-linux-gcc-x64.zip
+
+  build-windows-x64:
+    runs-on: windows-latest
+    steps:
+    - name: Check out the repository
+      uses: actions/checkout@v4
+
+    - name: Setup MSVC Developer Command Prompt
+      uses: TheMrMilchmann/setup-msvc-dev@v3.0.1
+      with: 
+        arch: x64
+  
+    - name: Install dependencies
+      run: |
+        choco install cmake --force
+        choco install opencv --version=4.10.0 --force
+        choco install zip --force
+    
+    - name: CMake Configure & Generate(x64)
+      run: cmake -S . -B build-x64 -DBUILD_EXAMPLE:BOOL="1" -DBUILD_EXAMPLE_OPENCV:BOOL="1" -DBUILD_BENCHMARK:BOOL="1" -DUSE_OPENMP:BOOL="1" -DOpenCV_DIR:PATH="C:\tools\opencv\build" -A x64 
+
+    - name: Build(x64)
+      run: cmake --build build-x64 --config Release
+    
+    - name: List build folder
+      run: |
+        dir .\build-x64\
+        dir .\build-x64\Release\
+
+    - name: Zip binary files
+      run: |
+        zip ./bin-windows-msvc-x64.zip .\build-x64\Release\example.exe .\build-x64\Release\benchmark.exe .\build-x64\Release\example-opencv.exe
+
+    - name: Archive Windows build artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: windows-x64-artifacts
+        path: |
+          ./bin-windows-msvc-x64.zip
+
+  build-windows-x86:
+    runs-on: windows-latest
+    steps:
+    - name: Check out the repository
+      uses: actions/checkout@v4
+
+    - name: Setup MSVC Developer Command Prompt
+      uses: TheMrMilchmann/setup-msvc-dev@v3.0.1
+      with: 
+        arch: amd64_x86
+  
+    - name: Install dependencies
+      run: |
+        choco install cmake --force
+        choco install zip --force
+    
+    - name: CMake Configure & Generate(x86)
+      run: cmake -S . -B build-x86 -DBUILD_EXAMPLE:BOOL="1" -DBUILD_BENCHMARK:BOOL="1" -DUSE_OPENMP:BOOL="1" -A Win32
+
+    - name: Build(x86)
+      run: cmake --build build-x86 --config Release
+    
+    - name: List build folder
+      run: |
+        dir .\build-x86\
+        dir .\build-x86\Release\
+
+    - name: Zip binary files
+      run: |
+        zip ./bin-windows-msvc-x86.zip .\build-x86\Release\example.exe .\build-x86\Release\benchmark.exe
+
+    - name: Archive Windows build artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: windows-x86-artifacts
+        path: |
+          ./bin-windows-msvc-x86.zip
+
+  build-windows-arm64:
+    runs-on: windows-latest
+    steps:
+    - name: Check out the repository
+      uses: actions/checkout@v4
+
+    - name: Setup MSVC Developer Command Prompt
+      uses: TheMrMilchmann/setup-msvc-dev@v3.0.1
+      with: 
+        arch: amd64_arm64
+  
+    - name: Install dependencies
+      run: |
+        choco install cmake --force
+        choco install zip --force
+    
+    - name: CMake Configure & Generate(arm64)
+      run: cmake -S . -B build-arm64 -DBUILD_EXAMPLE:BOOL="1" -DBUILD_BENCHMARK:BOOL="1" -DUSE_OPENMP:BOOL="1" -A ARM64
+
+    - name: Build(arm64)
+      run: cmake --build build-arm64 --config Release
+    
+    - name: List build folder
+      run: |
+        dir .\build-arm64\
+        dir .\build-arm64\Release\
+
+    - name: Zip binary files
+      run: |
+        zip ./bin-windows-msvc-arm64.zip .\build-arm64\Release\example.exe .\build-arm64\Release\benchmark.exe
+
+    - name: Archive Windows build artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: windows-arm64-artifacts
+        path: |
+          ./bin-windows-msvc-arm64.zip
+
+  release:
+    needs: [build-linux-x64, build-windows-x64, build-windows-x86, build-windows-arm64]
+    runs-on: ubuntu-latest
+    steps:
+    - name: Download all artifacts
+      uses: actions/download-artifact@v4
+      with:
+        path: ./releasefiles
+        merge-multiple: true
+  
+    - name: Display structure of downloaded files
+      run: ls -R ./releasefiles
+
+    - name: Create GitHub Release
+      uses: softprops/action-gh-release@v2
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+        files: |
+          ./releasefiles/*
+

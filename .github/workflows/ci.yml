@@ -7,15 +7,11 @@ on:
     - test-ci
 
 jobs:
-  build-linux:
+  build-linux-x64:
     runs-on: ubuntu-latest
     steps:
-    - name: Checkout
-      uses: actions/checkout@v2.0.0
-      with:
-        submodule_update: ON
-        run_tests: ON
-        unit_test_build: -Dtest=ON
+    - name: Check out the repository
+      uses: actions/checkout@v4
 
     - name: Install dependencies
       run: |
@@ -40,11 +36,11 @@ jobs:
       run: build/example-opencv
 
 
-  build-windows:
+  build-windows-x64:
     runs-on: windows-latest
     steps:
-    - name: Checkout
-      uses: actions/checkout@v2.0.0
+    - name: Check out the repository
+      uses: actions/checkout@v4
 
     - name: Setup MSVC Developer Command Prompt
       uses: TheMrMilchmann/setup-msvc-dev@v3.0.1
@@ -53,8 +49,8 @@ jobs:
   
     - name: Install dependencies
       run: |
-        choco install cmake --version=3.31.3
-        choco install opencv --version=4.10.0
+        choco install cmake --force
+        choco install opencv --version=4.10.0 --force
 
     - name: CMake Configure & Generate
       run: cmake -S . -B build -DBUILD_EXAMPLE:BOOL="1" -DBUILD_EXAMPLE_OPENCV:BOOL="1" -DBUILD_BENCHMARK:BOOL="1" -DUSE_OPENMP:BOOL="1" -DOpenCV_DIR:PATH="C:\tools\opencv\build"
@@ -72,3 +68,54 @@ jobs:
       run: |
         copy C:\tools\opencv\build\x64\vc16\bin\opencv_world4100.dll build\Release\
         build\Release\example-opencv.exe
+
+
+  build-windows-x86:
+    runs-on: windows-latest
+    steps:
+    - name: Check out the repository
+      uses: actions/checkout@v4
+
+    - name: Setup MSVC Developer Command Prompt
+      uses: TheMrMilchmann/setup-msvc-dev@v3.0.1
+      with: 
+        arch: amd64_x86
+
+    - name: Install dependencies
+      run: |
+        choco install cmake --force
+
+    - name: CMake Configure & Generate
+      run: cmake -S . -B build -DBUILD_EXAMPLE:BOOL="1"  -DBUILD_BENCHMARK:BOOL="1" -DUSE_OPENMP:BOOL="1" -A Win32
+
+    - name: Build
+      run: cmake --build build --config Release
+
+    - name: Run example tests
+      run: build\Release\example.exe
+
+    - name: Run benchmark tests
+      run: build\Release\benchmark.exe
+
+
+  build-windows-arm64:
+    runs-on: windows-latest
+    steps:
+    - name: Check out the repository
+      uses: actions/checkout@v4
+
+    - name: Setup MSVC Developer Command Prompt
+      uses: TheMrMilchmann/setup-msvc-dev@v3.0.1
+      with: 
+        arch: amd64_arm64
+
+    - name: Install dependencies
+      run: |
+        choco install cmake --force
+
+    - name: CMake Configure & Generate
+      run: cmake -S . -B build -DBUILD_EXAMPLE:BOOL="1"  -DBUILD_BENCHMARK:BOOL="1" -DUSE_OPENMP:BOOL="1" -A ARM64
+
+    - name: Build
+      run: cmake --build build --config Release
+
