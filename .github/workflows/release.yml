@@ -57,9 +57,9 @@ jobs:
   
     - name: Install dependencies
       run: |
-        choco install cmake --version=3.31.3
-        choco install opencv --version=4.10.0
-        choco install zip --version=3.0
+        choco install cmake --force
+        choco install opencv --version=4.10.0 --force
+        choco install zip --force
     
     - name: CMake Configure & Generate(x64)
       run: cmake -S . -B build-x64 -DBUILD_EXAMPLE:BOOL="1" -DBUILD_EXAMPLE_OPENCV:BOOL="1" -DBUILD_BENCHMARK:BOOL="1" -DUSE_OPENMP:BOOL="1" -DOpenCV_DIR:PATH="C:\tools\opencv\build" -A x64 
@@ -96,8 +96,8 @@ jobs:
   
     - name: Install dependencies
       run: |
-        choco install cmake --version=3.31.3
-        choco install zip --version=3.0
+        choco install cmake --force
+        choco install zip --force
     
     - name: CMake Configure & Generate(x86)
       run: cmake -S . -B build-x86 -DBUILD_EXAMPLE:BOOL="1" -DBUILD_BENCHMARK:BOOL="1" -DUSE_OPENMP:BOOL="1" -A Win32
@@ -134,8 +134,8 @@ jobs:
   
     - name: Install dependencies
       run: |
-        choco install cmake --version=3.31.3
-        choco install zip --version=3.0
+        choco install cmake --force
+        choco install zip --force
     
     - name: CMake Configure & Generate(arm64)
       run: cmake -S . -B build-arm64 -DBUILD_EXAMPLE:BOOL="1" -DBUILD_BENCHMARK:BOOL="1" -DUSE_OPENMP:BOOL="1" -A ARM64

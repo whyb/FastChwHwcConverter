@@ -49,8 +49,8 @@ jobs:
   
     - name: Install dependencies
       run: |
-        choco install cmake --version=3.31.3 --ignore-existing
-        choco install opencv --version=4.10.0 --ignore-existing
+        choco install cmake --force
+        choco install opencv --version=4.10.0 --force
 
     - name: CMake Configure & Generate
       run: cmake -S . -B build -DBUILD_EXAMPLE:BOOL="1" -DBUILD_EXAMPLE_OPENCV:BOOL="1" -DBUILD_BENCHMARK:BOOL="1" -DUSE_OPENMP:BOOL="1" -DOpenCV_DIR:PATH="C:\tools\opencv\build"
@@ -83,7 +83,7 @@ jobs:
 
     - name: Install dependencies
       run: |
-        choco install cmake --version=3.31.3 --ignore-existing
+        choco install cmake --force
 
     - name: CMake Configure & Generate
       run: cmake -S . -B build -DBUILD_EXAMPLE:BOOL="1"  -DBUILD_BENCHMARK:BOOL="1" -DUSE_OPENMP:BOOL="1" -A Win32
@@ -111,7 +111,7 @@ jobs:
 
     - name: Install dependencies
       run: |
-        choco install cmake --version=3.31.3 --ignore-existing
+        choco install cmake --force
 
     - name: CMake Configure & Generate
       run: cmake -S . -B build -DBUILD_EXAMPLE:BOOL="1"  -DBUILD_BENCHMARK:BOOL="1" -DUSE_OPENMP:BOOL="1" -A ARM64
@@ -134,7 +134,7 @@ jobs:
 
     - name: Install dependencies
       run: |
-        choco install cmake --version=3.31.3 --ignore-existing
+        choco install cmake --force
 
     - name: CMake Configure & Generate
       run: cmake -S . -B build -DBUILD_EXAMPLE:BOOL="1"  -DBUILD_BENCHMARK:BOOL="1" -DUSE_OPENMP:BOOL="1" -A ARM
