@@ -7,7 +7,11 @@
 #define TEST_COUNT 100
 
 int main() {
-    whyb::initAll();
+    bool init = whyb::initAll();
+    if (!init) { 
+        std::cout << "CUDA init error!" << std::endl;
+        return 0; 
+    }
     const std::vector<size_t> channels = { 1, 3, 4 };
     const std::vector<std::pair<size_t, size_t>> resolutions = {
         {426, 240},   // 240p  (SD)
