@@ -4,7 +4,7 @@
 ## Overview
 ### for CPU (OpenMP)
 FastChwHwcConverter.hpp is a high-performance, multi-thread, header-only C++ library for converting image data formats between **HWC (Height, Width, Channels)** and **CHW (Channels, Height, Width)**. The library leverages OpenMP parallel processing to provide lightning-fast performance.
-### for GPU (cuda)
+### for GPU (CUDA)
 FastChwHwcConverterCuda.hpp is a high-performance, fully GPU hardware accelerated, C++ library for converting image data formats between **HWC (Height, Width, Channels)** and **CHW (Channels, Height, Width)**. It supports any version above CUDA 10. The compilation environment does not need to install CUDA SDK, does not need to reference any CUDA header files, and does not need to link any external dll&so libraries. It will automatically search for CUDA's dynamic link library from the system and dynamically load the functions inside and use them.
 
 
@@ -20,8 +20,8 @@ Any similar type conversion code you find another project on GitHub will most li
 - [Installation](#installation)
 - [Requirements](#requirements)
 - [Let's Converter](#lets-converter)
-  - [HWC to CHW Conversion](#hwc-to-chw-conversion)
-  - [CHW to HWC Conversion](#chw-to-hwc-conversion)
+  - [HWC to CHW Conversion (CPU)](#hwc-to-chw-conversion-cpu)
+  - [CHW to HWC Conversion (CPU)](#chw-to-hwc-conversion-cpu)
   - [Example](#example)
 - [Benchmark Performance Timing Results](#benchmark-performance-timing-results)
 - [Contact](#contact)
@@ -67,18 +67,30 @@ The conversion between HWC (Height-Width-Channel) and CHW (Channel-Height-Width)
 - **Flexible**: Supports scaling, clamping, and normalization of image data, any data type.
 
 ## Installation
+### for CPU (OpenMP)
 Simply include the header file `FastChwHwcConverter.hpp` in your project:
 
 ```cpp
 #include "FastChwHwcConverter.hpp"
 ```
 
+### for GPU (CUDA)
+Simply include the header file `FastChwHwcConverterCuda.hpp` in your project:
+
+```cpp
+#include "FastChwHwcConverterCuda.hpp"
+```
+
+Usually you also need to copy a `nvrtc64_***_0.dll` (for Windows) or `libnvrtc.so`(for Linux) file in the CUDA Runtime SDK to the executable program directory, or set CUDA SDK HOME as a system environment variable.
+
+In addition, you need to download and install the latest version of the driver from the NVIDIA official website (recommended). Because this project will dynamically load driver file: `nvcuda.dll` (for Windows) or `libcuda.so`(for Linux).
+
 ## Requirements
 * C++11 or later
 * OpenMP support (optional, set USE_OPENMP to ON for high performance)
 * CMake v3.10 or later (optional)
 * OpenCV v4.0 or later (optional, if BUILD_EXAMPLE_OPENCV is ON)
-* CUDA 10+(optional, if you want to use CUDA)
+* CUDA 10+(optional, if you want to use cuda acceleration, And has NVIDIA GPU)
 
 ## Let's Converter
 
@@ -211,5 +223,5 @@ GPU: NVIDIA GeForce RTX 3060 Ti
 | 7680  | 4320   | 3       | 102.875ms     | 102.419ms     | 19.261ms     | 17.294ms     | 1.252ms  | 1.290ms  |
 | 7680  | 4320   | 4       | 133.081ms     | 136.308ms     | 23.398ms     | 18.445ms     | 1.670ms  | 1.688ms  |
 
-|ntact
+## Contact
 For any questions or suggestions, please open an issue or contact the me.
