@@ -147,7 +147,6 @@ static inline std::string compileCUDAWithNVRTC(const std::string& libraryName, c
         dlManager->unloadLibrary(libraryName);
         return "";
     }
-    std::cout << "Compile CUDA successfully." << std::endl;
 
     // Get PTX String
     size_t ptxSize;

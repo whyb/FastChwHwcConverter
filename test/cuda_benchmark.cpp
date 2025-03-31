@@ -5,9 +5,10 @@
 #include <chrono>
 
 #include "FastChwHwcConverterCuda.hpp"
+#define TEST_COUNT 1000
 
 const char* cudaSource = R"(
-    typedef unsigned char uint8_t;
+typedef unsigned char uint8_t;
 
     // HWC -> CHW
     extern "C" __global__ void cuda_hwc2chw(const size_t h, const size_t w, const size_t c,
@@ -38,6 +39,7 @@ const char* cudaSource = R"(
             }
         }
     }
+
 )";
 
 int main() {
@@ -134,120 +136,92 @@ int main() {
         return -1;
     }
 
-    // 设置图像参数（1024x1024，3 通道，HWC 排布）
-    const int width_img = 7680;
-    const int height_img = 4320;
-    const unsigned int channels = 4;
-    const size_t numPixels = width_img * height_img;
-    const size_t inputSizeBytes = numPixels * channels * sizeof(uint8_t);
-    const size_t tempSizeBytes = numPixels * channels * sizeof(float);
-    const size_t outputSizeBytes = numPixels * channels * sizeof(uint8_t);
+    const std::vector<size_t> channels = { 1, 3, 4 };
+    const std::vector<std::pair<size_t, size_t>> resolutions = {
+        {426, 240},   // 240p  (SD)
+        {640, 360},   // 360p  (SD)
+        {854, 480},   // 480p  (SD)
+        {1280, 720},  // 720p  (HD)
+        {1920, 1080}, // 1080p (HD)
+        {2560, 1440}, // 1440p (2K)
+        {3840, 2160}, // 2160p (4K)
+        {7680, 4320}  // 4320p (8K)
+    };
 
-    CUdeviceptr d_input = 0, d_temp = 0, d_output = 0;
-    cuRes = cuMemAlloc(&d_input, inputSizeBytes);
-    if (cuRes != 0) {
-        std::cerr << "cuMemAlloc (d_input) failed with error " << cuRes << std::endl;
-        goto cleanup;
-    }
-    cuRes = cuMemAlloc(&d_temp, tempSizeBytes);
-    if (cuRes != 0) {
-        std::cerr << "cuMemAlloc (d_temp) failed with error " << cuRes << std::endl;
-        goto cleanup_dinput;
-    }
-    cuRes = cuMemAlloc(&d_output, outputSizeBytes);
-    if (cuRes != 0) {
-        std::cerr << "cuMemAlloc (d_output) failed with error " << cuRes << std::endl;
-        goto cleanup_dtemp;
-    }
+    std::cout << "Width,\tHeight,\tChannel,\thwc2chw,\tchw2hwc" << std::endl;
 
-    // 初始化主机输入数据（HWC 排布，uint8_t 类型）
-    uint8_t* host_input = new uint8_t[inputSizeBytes];
-    for (size_t i = 0; i < inputSizeBytes; i++) {
-        host_input[i] = static_cast<uint8_t>(i % 256);
-    }
-    cuRes = cuMemcpyHtoD(d_input, host_input, inputSizeBytes);
-    delete[] host_input;
-    if (cuRes != 0) {
-        std::cerr << "cuMemcpyHtoD (d_input) failed with error " << cuRes << std::endl;
-        goto cleanup_doutput;
-    }
+    for (auto& resolution : resolutions) {
+        const size_t& width = resolution.first;
+        const size_t& height = resolution.second;
 
-    // 设置 kernel 执行参数
-    unsigned int blockDimX = 16, blockDimY = 16, blockDimZ = 1;
-    unsigned int gridDimX = (width_img + blockDimX - 1) / blockDimX;
-    unsigned int gridDimY = (height_img + blockDimY - 1) / blockDimY;
-    unsigned int gridDimZ = 1;
+        for (auto& channel : channels) {
+            // Defining input and output 
+            const size_t pixel_size = height * width * channel;
+            //std::vector<uint8_t> src_uint8(pixel_size); // Source data(hwc)
+            //std::vector<float> src_float(pixel_size); // Source data(chw)
+            //
+            //std::vector<float> out_float(pixel_size); // Inference output data(chw)
+            //std::vector<uint8_t> out_uint8(pixel_size); // Inference output data(hwc)
 
-    // 第一阶段：执行 cuda_hwc2chw 内核
-    size_t arg_h_val = static_cast<size_t>(height_img);
-    size_t arg_w_val = static_cast<size_t>(width_img);
-    size_t arg_c_val = static_cast<size_t>(channels);
-    float arg_alpha_val = 1.f / 255.f;
-    void* args1[] = { &arg_h_val, &arg_w_val, &arg_c_val, &d_input, &d_temp, &arg_alpha_val };
+            const size_t inputSizeBytes = pixel_size * sizeof(uint8_t);
+            const size_t tempSizeBytes = pixel_size * sizeof(float);
+            const size_t outputSizeBytes = pixel_size * sizeof(uint8_t);
+            CUdeviceptr d_input = 0, d_temp = 0, d_output = 0;
 
-    auto startTime = std::chrono::high_resolution_clock::now();
-    cuRes = cuLaunchKernel(func_hwc2chw, gridDimX, gridDimY, gridDimZ,
-        blockDimX, blockDimY, blockDimZ,
-        0, nullptr, args1, nullptr);
-    if (cuRes != 0) {
-        std::cerr << "cuLaunchKernel (cuda_hwc2chw) failed with error " << cuRes << std::endl;
-        goto cleanup_doutput;
-    }
-    cuRes = cuCtxSynchronize();
-    if (cuRes != 0) {
-        std::cerr << "cuCtxSynchronize after cuda_hwc2chw failed with error " << cuRes << std::endl;
-        goto cleanup_doutput;
-    }
-    auto endTime = std::chrono::high_resolution_clock::now();
-    auto hwc2chwDuration = std::chrono::duration_cast<std::chrono::microseconds>(endTime - startTime);
-    std::cout << "hwc2chw, " << width_img << ",\t" << height_img << ",\t" << channels << ",\t"
-        << std::fixed << std::setprecision(3)
-        << hwc2chwDuration.count() / 1000.0 << "ms" << std::endl;
+            cuRes = cuMemAlloc(&d_input, inputSizeBytes);
+            cuRes = cuMemAlloc(&d_temp, tempSizeBytes);
+            cuRes = cuMemAlloc(&d_output, outputSizeBytes);
 
-    // 第二阶段：执行 cuda_chw2hwc 内核
-    size_t arg_c2_val = static_cast<size_t>(channels);
-    size_t arg_h2_val = static_cast<size_t>(height_img);
-    size_t arg_w2_val = static_cast<size_t>(width_img);
-    uint8_t arg_alpha2_val = 255;
-    void* args2[] = { &arg_c2_val, &arg_h2_val, &arg_w2_val, &d_temp, &d_output, &arg_alpha2_val };
+            unsigned int blockDimX = 16, blockDimY = 16, blockDimZ = 1;
+            unsigned int gridDimX = (width + blockDimX - 1) / blockDimX;
+            unsigned int gridDimY = (height + blockDimY - 1) / blockDimY;
+            unsigned int gridDimZ = 1;
+            // for ready cuda kernel function(func_hwc2chw)
+            size_t arg_h_val = static_cast<size_t>(height);
+            size_t arg_w_val = static_cast<size_t>(width);
+            size_t arg_c_val = static_cast<size_t>(channel);
+            float arg_alpha_val = 1.f / 255.f;
+            void* args1[] = { &arg_h_val, &arg_w_val, &arg_c_val, &d_input, &d_temp, &arg_alpha_val };
 
-    startTime = std::chrono::high_resolution_clock::now();
-    cuRes = cuLaunchKernel(func_chw2hwc, gridDimX, gridDimY, gridDimZ,
-        blockDimX, blockDimY, blockDimZ,
-        0, nullptr, args2, nullptr);
-    if (cuRes != 0) {
-        std::cerr << "cuLaunchKernel (cuda_chw2hwc) failed with error " << cuRes << std::endl;
-        goto cleanup_doutput;
-    }
-    cuRes = cuCtxSynchronize();
-    if (cuRes != 0) {
-        std::cerr << "cuCtxSynchronize after cuda_chw2hwc failed with error " << cuRes << std::endl;
-        goto cleanup_doutput;
-    }
-    endTime = std::chrono::high_resolution_clock::now();
-    auto chw2hwcDuration = std::chrono::duration_cast<std::chrono::microseconds>(endTime - startTime);
-    std::cout << "chw2hwc, " << width_img << ",\t" << height_img << ",\t" << channels << ",\t"
-        << std::fixed << std::setprecision(3)
-        << chw2hwcDuration.count() / 1000.0 << "ms" << std::endl;
+            auto startTime = std::chrono::high_resolution_clock::now();
+            for (size_t i = 0; i < TEST_COUNT; ++i) {
+                //whyb::hwc2chw<uint8_t, float>(height, width, channel, (uint8_t*)src_uint8.data(), (float*)src_float.data());
+                cuRes = cuLaunchKernel(func_hwc2chw, gridDimX, gridDimY, gridDimZ,
+                    blockDimX, blockDimY, blockDimZ,
+                    0, nullptr, args1, nullptr);
+            }
+            cuRes = cuCtxSynchronize();
+            auto endTime = std::chrono::high_resolution_clock::now();
+            auto hwc2chwDuration = std::chrono::duration_cast<std::chrono::microseconds>(endTime - startTime) / double(TEST_COUNT);
 
-    // 将结果从设备拷贝回主机
-    uint8_t* host_output = new uint8_t[outputSizeBytes];
-    cuRes = cuMemcpyDtoH(host_output, d_output, outputSizeBytes);
-    if (cuRes != 0) {
-        std::cerr << "cuMemcpyDtoH failed with error " << cuRes << std::endl;
-        delete[] host_output;
-        goto cleanup_doutput;
+            // for ready cuda kernel function(func_chw2hwc)
+            size_t arg_c2_val = static_cast<size_t>(channel);
+            size_t arg_h2_val = static_cast<size_t>(height);
+            size_t arg_w2_val = static_cast<size_t>(width);
+            uint8_t arg_alpha2_val = 255;
+            void* args2[] = { &arg_c2_val, &arg_h2_val, &arg_w2_val, &d_temp, &d_output, &arg_alpha2_val };
+            startTime = std::chrono::high_resolution_clock::now();
+            for (size_t i = 0; i < TEST_COUNT; ++i) {
+                //whyb::chw2hwc<float, uint8_t>(channel, height, width, (float*)out_float.data(), (uint8_t*)out_uint8.data());
+                cuRes = cuLaunchKernel(func_chw2hwc, gridDimX, gridDimY, gridDimZ,
+                    blockDimX, blockDimY, blockDimZ,
+                    0, nullptr, args2, nullptr);
+            }
+            cuRes = cuCtxSynchronize();
+            endTime = std::chrono::high_resolution_clock::now();
+            auto chw2hwcDuration = std::chrono::duration_cast<std::chrono::microseconds>(endTime - startTime) / double(TEST_COUNT);
+
+            std::cout << width << ",\t" << height << ",\t" << channel << ",\t"
+                << std::fixed << std::setprecision(3)
+                << hwc2chwDuration.count() / 1000.0 << "ms,\t"
+                << chw2hwcDuration.count() / 1000.0 << "ms" << std::endl;
+
+            cuMemFree(d_input);
+            cuMemFree(d_temp);
+            cuMemFree(d_output);
+        }
     }
 
-    delete[] host_output;
-
-
-cleanup_doutput:
-    cuMemFree(d_output);
-cleanup_dtemp:
-    cuMemFree(d_temp);
-cleanup_dinput:
-    cuMemFree(d_input);
 cleanup:
     cuModuleUnload(module);
     cuCtxDestroy(context);
