@@ -89,6 +89,21 @@ typedef CUresult(*cuMemcpyDtoH_t)(void*, CUdeviceptr, unsigned int);
 #define DYNAMIC_LIBRARY_EXTENSION ".so"
 #endif
 
+// static Cuda Driver API function points
+static cuInit_t cuInit = nullptr;
+static cuDeviceGet_t cuDeviceGet = nullptr;
+static cuCtxCreate_t cuCtxCreate = nullptr;
+static cuCtxDestroy_t cuCtxDestroy = nullptr;
+static cuModuleLoadDataEx_t cuModuleLoadDataEx = nullptr;
+static cuModuleUnload_t cuModuleUnload = nullptr;
+static cuModuleGetFunction_t cuModuleGetFunction = nullptr;
+static cuLaunchKernel_t cuLaunchKernel = nullptr;
+static cuCtxSynchronize_t cuCtxSynchronize = nullptr;
+static cuMemAlloc_t cuMemAlloc = nullptr;
+static cuMemFree_t cuMemFree = nullptr;
+static cuMemcpyHtoD_t cuMemcpyHtoD = nullptr;
+static cuMemcpyDtoH_t cuMemcpyDtoH = nullptr;
+
 namespace whyb {
 
 static inline std::string compileCUDAWithNVRTC(const std::string& libraryName, const std::string& cudaSource)
@@ -103,14 +118,14 @@ static inline std::string compileCUDAWithNVRTC(const std::string& libraryName, c
     }
 
     // Get NVRTC function points
-    auto nvrtcCreateProgram_fun = reinterpret_cast<nvrtcCreateProgram_t>(dlManager->getFunction(libraryName, "nvrtcCreateProgram"));
-    auto nvrtcCompileProgram_fun = reinterpret_cast<nvrtcCompileProgram_t>(dlManager->getFunction(libraryName, "nvrtcCompileProgram"));
-    auto nvrtcGetPTXSize_fun = reinterpret_cast<nvrtcGetPTXSize_t>(dlManager->getFunction(libraryName, "nvrtcGetPTXSize"));
-    auto nvrtcGetPTX_fun = reinterpret_cast<nvrtcGetPTX_t>(dlManager->getFunction(libraryName, "nvrtcGetPTX"));
-    auto nvrtcDestroyProgram_fun = reinterpret_cast<nvrtcDestroyProgram_t>(dlManager->getFunction(libraryName, "nvrtcDestroyProgram"));
-    auto nvrtcGetProgramLogSize_fun = reinterpret_cast<nvrtcGetProgramLogSize_t>(dlManager->getFunction(libraryName, "nvrtcGetProgramLogSize"));
-    auto nvrtcGetProgramLog_fun = reinterpret_cast<nvrtcGetProgramLog_t>(dlManager->getFunction(libraryName, "nvrtcGetProgramLog"));
-    auto nvrtcGetErrorString_fun = reinterpret_cast<nvrtcGetErrorString_t>(dlManager->getFunction(libraryName, "nvrtcGetErrorString"));
+    auto nvrtcCreateProgram_fun = (nvrtcCreateProgram_t)(dlManager->getFunction(libraryName, "nvrtcCreateProgram"));
+    auto nvrtcCompileProgram_fun = (nvrtcCompileProgram_t)(dlManager->getFunction(libraryName, "nvrtcCompileProgram"));
+    auto nvrtcGetPTXSize_fun = (nvrtcGetPTXSize_t)(dlManager->getFunction(libraryName, "nvrtcGetPTXSize"));
+    auto nvrtcGetPTX_fun = (nvrtcGetPTX_t)(dlManager->getFunction(libraryName, "nvrtcGetPTX"));
+    auto nvrtcDestroyProgram_fun = (nvrtcDestroyProgram_t)(dlManager->getFunction(libraryName, "nvrtcDestroyProgram"));
+    auto nvrtcGetProgramLogSize_fun = (nvrtcGetProgramLogSize_t)(dlManager->getFunction(libraryName, "nvrtcGetProgramLogSize"));
+    auto nvrtcGetProgramLog_fun = (nvrtcGetProgramLog_t)(dlManager->getFunction(libraryName, "nvrtcGetProgramLog"));
+    auto nvrtcGetErrorString_fun = (nvrtcGetErrorString_t)(dlManager->getFunction(libraryName, "nvrtcGetErrorString"));
 
     // Check function point is not nullptr
     if (!nvrtcCreateProgram_fun || !nvrtcCompileProgram_fun || !nvrtcGetPTXSize_fun ||
@@ -124,7 +139,7 @@ static inline std::string compileCUDAWithNVRTC(const std::string& libraryName, c
 
     // Create NVRTC Program Object
     nvrtcProgram prog;
-    nvrtcResult res = nvrtcCreateProgram_fun(&prog, cudaSource.c_str(), "kernel.cu", 0, nullptr, nullptr);
+    nvrtcResult res = nvrtcCreateProgram_fun(&prog, cudaSource.c_str(), "FastChwHwcConverterCuda.cu", 0, nullptr, nullptr);
     if (res != NVRTC_SUCCESS)
     {
         std::cerr << "nvrtcCreateProgram failed: " << nvrtcGetErrorString_fun(res) << std::endl;
@@ -201,7 +216,7 @@ static inline std::string findNVRTCModuleName()
 
 #ifdef _WIN32
     for (const auto& version : cudaVersions)
-    {
+    {   //e.g. nvrtc64_128_0.dll
         std::string libraryName = executablePath + "\\nvrtc64_" + version + ".dll";
         DWORD fileAttr = GetFileAttributesA(libraryName.c_str());
         if (fileAttr != INVALID_FILE_ATTRIBUTES && !(fileAttr & FILE_ATTRIBUTE_DIRECTORY))  // file exists
@@ -216,7 +231,7 @@ static inline std::string findNVRTCModuleName()
         return libraryName;
     }
     for (const auto& version : cudaVersions)
-    {
+    {   //e.g. libnvrtc.so.128_0
         std::string libraryName = executablePath + "/libnvrtc.so." + version;
         if (access(libraryName.c_str(), F_OK) == 0)  // file exists
         {
@@ -227,6 +242,43 @@ static inline std::string findNVRTCModuleName()
 
     std::cerr << "No suitable NVRTC library found in the current executable directory: " << executablePath << std::endl;
     return "";
+}
+
+static inline bool initCudaDriverAPI()
+{
+#ifdef _WIN32
+    const std::string driver_dll = "nvcuda.dll";
+#else
+    const std::string driver_dll = "libcuda.so";
+#endif
+    auto* dlManager = whyb::DynamicLibraryManager::instance();
+    auto driverLib = dlManager->loadLibrary(driver_dll);
+    if (!driverLib)
+    {
+        std::cerr << "Failed to load NVIDIA Driver API library: " << driver_dll << std::endl;
+        return false;
+    }
+    cuInit = (cuInit_t)(dlManager->getFunction(driver_dll, "cuInit"));
+    cuDeviceGet = (cuDeviceGet_t)(dlManager->getFunction(driver_dll, "cuDeviceGet"));
+    cuCtxCreate = (cuCtxCreate_t)(dlManager->getFunction(driver_dll, "cuCtxCreate_v2"));
+    cuCtxDestroy = (cuCtxDestroy_t)(dlManager->getFunction(driver_dll, "cuCtxDestroy_v2"));
+    cuModuleLoadDataEx = (cuModuleLoadDataEx_t)(dlManager->getFunction(driver_dll, "cuModuleLoadDataEx"));
+    cuModuleUnload = (cuModuleUnload_t)(dlManager->getFunction(driver_dll, "cuModuleUnload"));
+    cuModuleGetFunction = (cuModuleGetFunction_t)(dlManager->getFunction(driver_dll, "cuModuleGetFunction"));
+    cuLaunchKernel = (cuLaunchKernel_t)(dlManager->getFunction(driver_dll, "cuLaunchKernel"));
+    cuCtxSynchronize = (cuCtxSynchronize_t)(dlManager->getFunction(driver_dll, "cuCtxSynchronize"));
+    cuMemAlloc = (cuMemAlloc_t)(dlManager->getFunction(driver_dll, "cuMemAlloc_v2"));
+    cuMemFree = (cuMemFree_t)(dlManager->getFunction(driver_dll, "cuMemFree_v2"));
+    cuMemcpyHtoD = (cuMemcpyHtoD_t)(dlManager->getFunction(driver_dll, "cuMemcpyHtoD_v2"));
+    cuMemcpyDtoH = (cuMemcpyDtoH_t)(dlManager->getFunction(driver_dll, "cuMemcpyDtoH_v2"));
+
+    if (!cuInit || !cuDeviceGet || !cuCtxCreate || !cuModuleLoadDataEx ||
+        !cuModuleGetFunction || !cuLaunchKernel || !cuCtxSynchronize ||
+        !cuMemAlloc || !cuMemFree || !cuMemcpyHtoD || !cuMemcpyDtoH) {
+        std::cerr << "Failed to load one or more CUDA Driver API functions." << std::endl;
+        return false;
+    }
+    return true;
 }
 
 } // namespace whyb

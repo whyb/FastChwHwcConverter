@@ -57,52 +57,27 @@ int main() {
 
 
     //================ 使用 CUDA Driver API 加载 PTX 模块并调用内核 =================
-    const char* driver_dll = "nvcuda.dll";
-    HMODULE driverLib = LoadLibrary(driver_dll);
-    if (!driverLib) {
-        std::cerr << "Load CUDA driver dll failed: " << driver_dll << std::endl;
-        return -1;
-    }
-    auto cuInit = (cuInit_t)GetProcAddress(driverLib, "cuInit");
-    auto cuDeviceGet = (cuDeviceGet_t)GetProcAddress(driverLib, "cuDeviceGet");
-    auto cuCtxCreate = (cuCtxCreate_t)GetProcAddress(driverLib, "cuCtxCreate_v2");
-    auto cuCtxDestroy = (cuCtxDestroy_t)GetProcAddress(driverLib, "cuCtxDestroy_v2");
-    auto cuModuleLoadDataEx = (cuModuleLoadDataEx_t)GetProcAddress(driverLib, "cuModuleLoadDataEx");
-    auto cuModuleUnload = (cuModuleUnload_t)GetProcAddress(driverLib, "cuModuleUnload");
-    auto cuModuleGetFunction = (cuModuleGetFunction_t)GetProcAddress(driverLib, "cuModuleGetFunction");
-    auto cuLaunchKernel = (cuLaunchKernel_t)GetProcAddress(driverLib, "cuLaunchKernel");
-    auto cuCtxSynchronize = (cuCtxSynchronize_t)GetProcAddress(driverLib, "cuCtxSynchronize");
-    auto cuMemAlloc = (cuMemAlloc_t)GetProcAddress(driverLib, "cuMemAlloc_v2");
-    auto cuMemFree = (cuMemFree_t)GetProcAddress(driverLib, "cuMemFree_v2");
-    auto cuMemcpyHtoD = (cuMemcpyHtoD_t)GetProcAddress(driverLib, "cuMemcpyHtoD_v2");
-    auto cuMemcpyDtoH = (cuMemcpyDtoH_t)GetProcAddress(driverLib, "cuMemcpyDtoH_v2");
-
-    if (!cuInit || !cuDeviceGet || !cuCtxCreate || !cuModuleLoadDataEx ||
-        !cuModuleGetFunction || !cuLaunchKernel || !cuCtxSynchronize ||
-        !cuMemAlloc || !cuMemFree || !cuMemcpyHtoD || !cuMemcpyDtoH) {
-        std::cerr << "Failed to load one or more CUDA Driver API functions." << std::endl;
-        FreeLibrary(driverLib);
+    bool init_cuda_driver = whyb::initCudaDriverAPI();
+    if (!init_cuda_driver) {
+        std::cerr << "Failed to load CUDA Driver API functions." << std::endl;
         return -1;
     }
 
     CUresult cuRes = cuInit(0);
     if (cuRes != 0) {
         std::cerr << "cuInit failed with error " << cuRes << std::endl;
-        FreeLibrary(driverLib);
         return -1;
     }
     CUdevice device;
     cuRes = cuDeviceGet(&device, 0);
     if (cuRes != 0) {
         std::cerr << "cuDeviceGet failed with error " << cuRes << std::endl;
-        FreeLibrary(driverLib);
         return -1;
     }
     CUcontext context;
     cuRes = cuCtxCreate(&context, 0, device);
     if (cuRes != 0) {
         std::cerr << "cuCtxCreate failed with error " << cuRes << std::endl;
-        FreeLibrary(driverLib);
         return -1;
     }
 
@@ -112,7 +87,6 @@ int main() {
     if (cuRes != 0) {
         std::cerr << "cuModuleLoadDataEx failed with error " << cuRes << std::endl;
         cuCtxDestroy(context);
-        FreeLibrary(driverLib);
         return -1;
     }
 
@@ -123,7 +97,6 @@ int main() {
         std::cerr << "cuModuleGetFunction (cuda_hwc2chw) failed with error " << cuRes << std::endl;
         cuModuleUnload(module);
         cuCtxDestroy(context);
-        FreeLibrary(driverLib);
         return -1;
     }
     CUfunction func_chw2hwc;
@@ -132,7 +105,6 @@ int main() {
         std::cerr << "cuModuleGetFunction (cuda_chw2hwc) failed with error " << cuRes << std::endl;
         cuModuleUnload(module);
         cuCtxDestroy(context);
-        FreeLibrary(driverLib);
         return -1;
     }
 
@@ -225,7 +197,6 @@ int main() {
 cleanup:
     cuModuleUnload(module);
     cuCtxDestroy(context);
-    FreeLibrary(driverLib);
 
     std::cout << "CUDA Benchmark completed successfully!" << std::endl;
     return 0;
