@@ -74,6 +74,7 @@ Simply include the header file `FastChwHwcConverter.hpp` in your project:
 * OpenMP support (optional, set USE_OPENMP to ON for high performance)
 * CMake v3.10 or later (optional)
 * OpenCV v4.0 or later (optional, if BUILD_EXAMPLE_OPENCV is ON)
+* CUDA 10+(optional, if BUILD_EXAMPLE_CUDA is ON)
 
 ## Let's Converter
 

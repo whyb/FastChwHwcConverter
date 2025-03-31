@@ -49,7 +49,7 @@ if(BUILD_BENCHMARK)
 endif()
 
 if(BUILD_CUDA_BENCHMARK)
-    add_executable(cuda_benchmark test/cuda_benchmark.cpp)
+    add_executable(cuda_benchmark DynamicLibraryManager.hpp FastChwHwcConverterCuda.hpp test/cuda_benchmark.cpp)
     target_include_directories(cuda_benchmark PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 endif()
 

@@ -4,84 +4,9 @@
 #include <iomanip>
 #include <chrono>
 
-// NVRTC 定义
-typedef enum {
-    NVRTC_SUCCESS = 0,
-    NVRTC_ERROR_OUT_OF_MEMORY = 1,
-    NVRTC_ERROR_PROGRAM_CREATION_FAILURE = 2,
-    NVRTC_ERROR_INVALID_INPUT = 3,
-    NVRTC_ERROR_INVALID_PROGRAM = 4,
-    NVRTC_ERROR_INVALID_OPTION = 5,
-    NVRTC_ERROR_COMPILATION = 6,
-    NVRTC_ERROR_BUILTIN_OPERATION_FAILURE = 7,
-    NVRTC_ERROR_NO_NAME_EXPRESSIONS_AFTER_COMPILATION = 8,
-    NVRTC_ERROR_NO_LOWERED_NAMES_BEFORE_COMPILATION = 9,
-    NVRTC_ERROR_NAME_EXPRESSION_NOT_VALID = 10,
-    NVRTC_ERROR_INTERNAL_ERROR = 11
-} nvrtcResult;
-typedef struct _nvrtcProgram* nvrtcProgram;
+#include "FastChwHwcConverterCuda.hpp"
 
-// NVRTC 函数指针类型声明
-typedef nvrtcResult(*nvrtcCreateProgram_t)(nvrtcProgram*, const char*, const char*, int, const char* const*, const char* const*);
-typedef nvrtcResult(*nvrtcCompileProgram_t)(nvrtcProgram, int, const char* const*);
-typedef nvrtcResult(*nvrtcGetPTXSize_t)(nvrtcProgram, size_t*);
-typedef nvrtcResult(*nvrtcGetPTX_t)(nvrtcProgram, char*);
-typedef nvrtcResult(*nvrtcDestroyProgram_t)(nvrtcProgram*);
-typedef nvrtcResult(*nvrtcGetProgramLogSize_t)(nvrtcProgram, size_t*);
-typedef nvrtcResult(*nvrtcGetProgramLog_t)(nvrtcProgram, char*);
-typedef const char* (*nvrtcGetErrorString_t)(nvrtcResult);
-
-
-// 定义 CUDA Driver API 函数指针类型
-typedef int CUresult;
-typedef int CUdevice;
-typedef void* CUcontext;
-typedef void* CUmodule;
-typedef void* CUfunction;
-typedef unsigned long long CUdeviceptr;
-// 函数指针类型
-typedef CUresult(*cuInit_t)(unsigned int);
-typedef CUresult(*cuDeviceGet_t)(CUdevice*, int);
-typedef CUresult(*cuCtxCreate_t)(CUcontext*, unsigned int, CUdevice);
-typedef CUresult(*cuCtxDestroy_t)(CUcontext);
-typedef CUresult(*cuModuleLoadDataEx_t)(CUmodule*, const void*, unsigned int, int*, void**);
-typedef CUresult(*cuModuleUnload_t)(CUmodule);
-typedef CUresult(*cuModuleGetFunction_t)(CUfunction*, CUmodule, const char*);
-typedef CUresult(*cuLaunchKernel_t)(CUfunction, unsigned int, unsigned int, unsigned int,
-    unsigned int, unsigned int, unsigned int, unsigned int, CUcontext, void**, void**);
-typedef CUresult(*cuCtxSynchronize_t)(void);
-typedef CUresult(*cuMemAlloc_t)(CUdeviceptr*, unsigned int);
-typedef CUresult(*cuMemFree_t)(CUdeviceptr);
-typedef CUresult(*cuMemcpyHtoD_t)(CUdeviceptr, const void*, unsigned int);
-typedef CUresult(*cuMemcpyDtoH_t)(void*, CUdeviceptr, unsigned int);
-
-int main() {
-    ///////////////////// NVRTC 编译过程 /////////////////////
-    const char* nvrtc_dll = "nvrtc64_112_0.dll";
-    HMODULE nvrtcLib = LoadLibrary(nvrtc_dll);
-    if (!nvrtcLib) {
-        std::cerr << "load NVRTC dll failed. dll: " << nvrtc_dll << std::endl;
-        return -1;
-    }
-
-    // 获取 NVRTC 函数指针
-    auto nvrtcCreateProgram_fun = (nvrtcCreateProgram_t)GetProcAddress(nvrtcLib, "nvrtcCreateProgram");
-    auto nvrtcCompileProgram_fun = (nvrtcCompileProgram_t)GetProcAddress(nvrtcLib, "nvrtcCompileProgram");
-    auto nvrtcGetPTXSize_fun = (nvrtcGetPTXSize_t)GetProcAddress(nvrtcLib, "nvrtcGetPTXSize");
-    auto nvrtcGetPTX_fun = (nvrtcGetPTX_t)GetProcAddress(nvrtcLib, "nvrtcGetPTX");
-    auto nvrtcDestroyProgram_fun = (nvrtcDestroyProgram_t)GetProcAddress(nvrtcLib, "nvrtcDestroyProgram");
-    auto nvrtcGetProgramLogSize_fun = (nvrtcGetProgramLogSize_t)GetProcAddress(nvrtcLib, "nvrtcGetProgramLogSize");
-    auto nvrtcGetProgramLog_fun = (nvrtcGetProgramLog_t)GetProcAddress(nvrtcLib, "nvrtcGetProgramLog");
-    auto nvrtcGetErrorString_fun = (nvrtcGetErrorString_t)GetProcAddress(nvrtcLib, "nvrtcGetErrorString");
-
-    if (!nvrtcCreateProgram_fun || !nvrtcCompileProgram_fun || !nvrtcGetPTXSize_fun ||
-        !nvrtcGetPTX_fun || !nvrtcDestroyProgram_fun) {
-        std::cerr << "Can't load NVRTC functions from: " << nvrtc_dll << std::endl;
-        FreeLibrary(nvrtcLib);
-        return -1;
-    }
-
-    const char* cudaSource = R"(
+const char* cudaSource = R"(
     typedef unsigned char uint8_t;
 
     // HWC -> CHW
@@ -115,45 +40,25 @@ int main() {
     }
 )";
 
-    nvrtcProgram prog;
-    nvrtcResult res = nvrtcCreateProgram_fun(&prog, cudaSource, "kernel.cu", 0, nullptr, nullptr);
-    if (res != NVRTC_SUCCESS) {
-        std::cerr << "nvrtcCreateProgram failed: " << nvrtcGetErrorString_fun(res) << std::endl;
-        FreeLibrary(nvrtcLib);
+int main() {
+    std::string nvrtc_module_filename = whyb::findNVRTCModuleName();
+    if (nvrtc_module_filename.empty()) {
+        std::cerr << "Could not found CUDA NVRTC dll failed." << std::endl;
         return -1;
     }
-    std::cout << "Create Program successfully." << std::endl;
-
-    // 这里如果需要可增加编译选项，例如 "-default-device" 解决全局变量处理问题，可以传 options 数组
-    const char* options[] = { "-default-device", "--std=c++11" };
-    res = nvrtcCompileProgram_fun(prog, 2, options);
-    if (res != NVRTC_SUCCESS) {
-        size_t logSize;
-        nvrtcGetProgramLogSize_fun(prog, &logSize);
-        char* log = new char[logSize];
-        nvrtcGetProgramLog_fun(prog, log);
-        std::cerr << "CUDA Compile error: " << log << std::endl;
-        delete[] log;
-        nvrtcDestroyProgram_fun(&prog);
-        FreeLibrary(nvrtcLib);
+    std::string ptx_str = whyb::compileCUDAWithNVRTC(nvrtc_module_filename, cudaSource);
+    if (ptx_str.empty()) {
+        std::cerr << "Compile CUDA Source code failed." << std::endl;
         return -1;
     }
-    std::cout << "Compile CUDA successfully." << std::endl;
+    std::cout << "Compile CUDA Source code to PTX Successfully." << std::endl;
 
-    size_t ptxSize;
-    nvrtcGetPTXSize_fun(prog, &ptxSize);
-    char* ptx = new char[ptxSize];
-    nvrtcGetPTX_fun(prog, ptx);
-
-    // 销毁 NVRTC 程序对象
-    nvrtcDestroyProgram_fun(&prog);
 
     //================ 使用 CUDA Driver API 加载 PTX 模块并调用内核 =================
     const char* driver_dll = "nvcuda.dll";
     HMODULE driverLib = LoadLibrary(driver_dll);
     if (!driverLib) {
         std::cerr << "Load CUDA driver dll failed: " << driver_dll << std::endl;
-        delete[] ptx;
         return -1;
     }
     auto cuInit = (cuInit_t)GetProcAddress(driverLib, "cuInit");
@@ -174,7 +79,6 @@ int main() {
         !cuModuleGetFunction || !cuLaunchKernel || !cuCtxSynchronize ||
         !cuMemAlloc || !cuMemFree || !cuMemcpyHtoD || !cuMemcpyDtoH) {
         std::cerr << "Failed to load one or more CUDA Driver API functions." << std::endl;
-        delete[] ptx;
         FreeLibrary(driverLib);
         return -1;
     }
@@ -182,7 +86,6 @@ int main() {
     CUresult cuRes = cuInit(0);
     if (cuRes != 0) {
         std::cerr << "cuInit failed with error " << cuRes << std::endl;
-        delete[] ptx;
         FreeLibrary(driverLib);
         return -1;
     }
@@ -190,7 +93,6 @@ int main() {
     cuRes = cuDeviceGet(&device, 0);
     if (cuRes != 0) {
         std::cerr << "cuDeviceGet failed with error " << cuRes << std::endl;
-        delete[] ptx;
         FreeLibrary(driverLib);
         return -1;
     }
@@ -198,15 +100,13 @@ int main() {
     cuRes = cuCtxCreate(&context, 0, device);
     if (cuRes != 0) {
         std::cerr << "cuCtxCreate failed with error " << cuRes << std::endl;
-        delete[] ptx;
         FreeLibrary(driverLib);
         return -1;
     }
 
     // 加载编译好的 PTX 模块到 GPU 内存中
     CUmodule module;
-    cuRes = cuModuleLoadDataEx(&module, ptx, 0, nullptr, nullptr);
-    delete[] ptx; // 释放 PTX 缓冲区
+    cuRes = cuModuleLoadDataEx(&module, ptx_str.c_str(), 0, nullptr, nullptr);
     if (cuRes != 0) {
         std::cerr << "cuModuleLoadDataEx failed with error " << cuRes << std::endl;
         cuCtxDestroy(context);
@@ -339,12 +239,6 @@ int main() {
         goto cleanup_doutput;
     }
 
-    // 输出部分结果，例如前 100 个像素的值
-    // std::cout << "Output data (first 100 values):" << std::endl;
-    // for (size_t i = 0; i < 100 && i < outputSizeBytes; i++) {
-    //     std::cout << static_cast<int>(host_output[i]) << " ";
-    // }
-    // std::cout << std::endl;
     delete[] host_output;
 
 
