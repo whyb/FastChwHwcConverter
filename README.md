@@ -5,7 +5,7 @@
 ### for CPU (OpenMP)
 FastChwHwcConverter.hpp is a high-performance, multi-thread, header-only C++ library for converting image data formats between **HWC (Height, Width, Channels)** and **CHW (Channels, Height, Width)**. The library leverages OpenMP parallel processing to provide lightning-fast performance.
 ### for GPU (CUDA)
-FastChwHwcConverterCuda.hpp is a high-performance, fully GPU hardware accelerated, C++ library for converting image data formats between **HWC (Height, Width, Channels)** and **CHW (Channels, Height, Width)**. It supports any version above CUDA 10. The compilation environment does not need to install CUDA SDK, does not need to reference any CUDA header files, and does not need to link any external dll&so libraries. It will automatically search for CUDA's dynamic link library from the system and dynamically load the functions inside and use them.
+FastChwHwcConverterCuda.hpp is a high-performance, fully GPU hardware accelerated, C++ library for converting image data formats between **HWC (Height, Width, Channels)** and **CHW (Channels, Height, Width)**. It supports any version above CUDA 10. The compilation environment does not need to install CUDA SDK, does not need to reference any CUDA header files, and does not need to static link any external dll&so libraries. It will automatically search for CUDA's dynamic link library from the system path and dynamically load the functions inside and use them.
 
 
 Any similar type conversion code you find another project on GitHub will most likely only achieve performance close to the speed of [single-thread execution](#benchmark-performance-timing-results).

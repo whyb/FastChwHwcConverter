@@ -6,41 +6,6 @@
 #include "FastChwHwcConverterCuda.hpp"
 #define TEST_COUNT 1000
 
-const char* cudaSource = R"(
-typedef unsigned char uint8_t;
-
-    // HWC -> CHW
-    extern "C" __global__ void cuda_hwc2chw(const size_t h, const size_t w, const size_t c,
-                                            const uint8_t* src, float* dst, const float alpha = 1.0f) {
-        int dx = blockDim.x * blockIdx.x + threadIdx.x;
-        int dy = blockDim.y * blockIdx.y + threadIdx.y;
-
-        if (dx < w && dy < h) {
-            for (size_t channel = 0; channel < c; ++channel) {
-                size_t src_idx = dy * w * c + dx * c + channel;
-                size_t dst_idx = channel * w * h + dy * w + dx;
-                dst[dst_idx] = src[src_idx] * alpha;
-            }
-        }
-    }
-
-    // CHW -> HWC
-    extern "C" __global__ void cuda_chw2hwc(const size_t c, const size_t h, const size_t w,
-                                            const float* src, uint8_t* dst, const uint8_t alpha = 1) {
-        int dx = blockDim.x * blockIdx.x + threadIdx.x;
-        int dy = blockDim.y * blockIdx.y + threadIdx.y;
-
-        if (dx < w && dy < h) {
-            for (size_t channel = 0; channel < c; ++channel) {
-                size_t src_idx = channel * w * h + dy * w + dx;
-                size_t dst_idx = dy * w * c + dx * c + channel;
-                dst[dst_idx] = static_cast<uint8_t>(src[src_idx] * alpha);
-            }
-        }
-    }
-
-)";
-
 int main() {
     std::string nvrtc_module_filename = whyb::findNVRTCModuleName();
     if (nvrtc_module_filename.empty()) {
@@ -128,11 +93,6 @@ int main() {
         for (auto& channel : channels) {
             // Defining input and output 
             const size_t pixel_size = height * width * channel;
-            //std::vector<uint8_t> src_uint8(pixel_size); // Source data(hwc)
-            //std::vector<float> src_float(pixel_size); // Source data(chw)
-            //
-            //std::vector<float> out_float(pixel_size); // Inference output data(chw)
-            //std::vector<uint8_t> out_uint8(pixel_size); // Inference output data(hwc)
 
             const size_t inputSizeBytes = pixel_size * sizeof(uint8_t);
             const size_t tempSizeBytes = pixel_size * sizeof(float);
@@ -143,10 +103,10 @@ int main() {
             cuRes = cuMemAlloc(&d_temp, tempSizeBytes);
             cuRes = cuMemAlloc(&d_output, outputSizeBytes);
 
-            unsigned int blockDimX = 16, blockDimY = 16, blockDimZ = 1;
-            unsigned int gridDimX = (width + blockDimX - 1) / blockDimX;
-            unsigned int gridDimY = (height + blockDimY - 1) / blockDimY;
-            unsigned int gridDimZ = 1;
+            const unsigned int blockDimX = 16, blockDimY = 16, blockDimZ = 1;
+            const unsigned int gridDimX = ((unsigned int)width + blockDimX - 1) / blockDimX;
+            const unsigned int gridDimY = ((unsigned int)height + blockDimY - 1) / blockDimY;
+            const unsigned int gridDimZ = 1;
             // for ready cuda kernel function(func_hwc2chw)
             size_t arg_h_val = static_cast<size_t>(height);
             size_t arg_w_val = static_cast<size_t>(width);
@@ -156,8 +116,8 @@ int main() {
 
             auto startTime = std::chrono::high_resolution_clock::now();
             for (size_t i = 0; i < TEST_COUNT; ++i) {
-                //whyb::hwc2chw<uint8_t, float>(height, width, channel, (uint8_t*)src_uint8.data(), (float*)src_float.data());
-                cuRes = cuLaunchKernel(func_hwc2chw, gridDimX, gridDimY, gridDimZ,
+                cuRes = cuLaunchKernel(
+                    func_hwc2chw, gridDimX, gridDimY, gridDimZ,
                     blockDimX, blockDimY, blockDimZ,
                     0, nullptr, args1, nullptr);
             }
@@ -166,15 +126,15 @@ int main() {
             auto hwc2chwDuration = std::chrono::duration_cast<std::chrono::microseconds>(endTime - startTime) / double(TEST_COUNT);
 
             // for ready cuda kernel function(func_chw2hwc)
-            size_t arg_c2_val = static_cast<size_t>(channel);
-            size_t arg_h2_val = static_cast<size_t>(height);
-            size_t arg_w2_val = static_cast<size_t>(width);
+            size_t arg_c2_val = channel;
+            size_t arg_h2_val = height;
+            size_t arg_w2_val = width;
             uint8_t arg_alpha2_val = 255;
             void* args2[] = { &arg_c2_val, &arg_h2_val, &arg_w2_val, &d_temp, &d_output, &arg_alpha2_val };
             startTime = std::chrono::high_resolution_clock::now();
             for (size_t i = 0; i < TEST_COUNT; ++i) {
-                //whyb::chw2hwc<float, uint8_t>(channel, height, width, (float*)out_float.data(), (uint8_t*)out_uint8.data());
-                cuRes = cuLaunchKernel(func_chw2hwc, gridDimX, gridDimY, gridDimZ,
+                cuRes = cuLaunchKernel(
+                    func_chw2hwc, gridDimX, gridDimY, gridDimZ,
                     blockDimX, blockDimY, blockDimZ,
                     0, nullptr, args2, nullptr);
             }

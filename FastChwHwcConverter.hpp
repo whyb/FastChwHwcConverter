@@ -32,16 +32,16 @@
 // Check if the compiler supports C++17
 #if __cplusplus >= 201703L
 // If C++17 is supported, use std::clamp from the standard library
-#define CLAMP(value, low, high) std::clamp(value, low, high)
+#define STD_CLAMP(value, low, high) (std::clamp)(value, low, high)
 #else
 // If C++17 is not supported but C++11 is, implement std::clamp using std::min and std::max
-#define CLAMP(value, low, high) (std::max(low, std::min(value, high)))
+#define STD_CLAMP(value, low, high) ((std::max)(low, (std::min)(value, high)))
 #endif
 
 namespace whyb {
 template <typename T>
-T std_clamp(const T& value, const T& low, const T& high) {
-    return CLAMP(value, low, high);
+inline T std_clamp(const T& value, const T& low, const T& high) {
+    return STD_CLAMP(value, low, high);
 }
 /**
  * @brief Determines if two numbers are approximately equal
