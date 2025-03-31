@@ -21,13 +21,12 @@ jobs:
 
     - name: Install dependencies
       run: |
-        sudo apt-get update
         sudo apt-get install -y cmake
         sudo apt-get install -y libomp-dev
         sudo apt-get install -y libopencv-dev
 
     - name: CMake Configure & Generate(x64)
-      run: cmake -S . -B build-x64 -DBUILD_EXAMPLE:BOOL="1" -DBUILD_EXAMPLE_OPENCV:BOOL="1" -DBUILD_BENCHMARK:BOOL="1" -DUSE_OPENMP:BOOL="1"
+      run: cmake -S . -B build-x64 -DBUILD_EXAMPLE:BOOL="1" -DBUILD_EXAMPLE_OPENCV:BOOL="1" -DBUILD_BENCHMARK:BOOL="1" -DBUILD_CUDA_BENCHMARK:BOOL="1" -DUSE_OPENMP:BOOL="1"
 
     - name: Build(x64)
       run: cmake --build build-x64 --config Release
@@ -62,7 +61,7 @@ jobs:
         choco install zip --force
     
     - name: CMake Configure & Generate(x64)
-      run: cmake -S . -B build-x64 -DBUILD_EXAMPLE:BOOL="1" -DBUILD_EXAMPLE_OPENCV:BOOL="1" -DBUILD_BENCHMARK:BOOL="1" -DUSE_OPENMP:BOOL="1" -DOpenCV_DIR:PATH="C:\tools\opencv\build" -A x64 
+      run: cmake -S . -B build-x64 -DBUILD_EXAMPLE:BOOL="1" -DBUILD_EXAMPLE_OPENCV:BOOL="1" -DBUILD_BENCHMARK:BOOL="1" -DBUILD_CUDA_BENCHMARK:BOOL="1" -DUSE_OPENMP:BOOL="1" -DOpenCV_DIR:PATH="C:\tools\opencv\build" -A x64 
 
     - name: Build(x64)
       run: cmake --build build-x64 --config Release
@@ -100,7 +99,7 @@ jobs:
         choco install zip --force
     
     - name: CMake Configure & Generate(x86)
-      run: cmake -S . -B build-x86 -DBUILD_EXAMPLE:BOOL="1" -DBUILD_BENCHMARK:BOOL="1" -DUSE_OPENMP:BOOL="1" -A Win32
+      run: cmake -S . -B build-x86 -DBUILD_EXAMPLE:BOOL="1" -DBUILD_BENCHMARK:BOOL="1" -DBUILD_CUDA_BENCHMARK:BOOL="1" -DUSE_OPENMP:BOOL="1" -A Win32
 
     - name: Build(x86)
       run: cmake --build build-x86 --config Release
@@ -138,7 +137,7 @@ jobs:
         choco install zip --force
     
     - name: CMake Configure & Generate(arm64)
-      run: cmake -S . -B build-arm64 -DBUILD_EXAMPLE:BOOL="1" -DBUILD_BENCHMARK:BOOL="1" -DUSE_OPENMP:BOOL="1" -A ARM64
+      run: cmake -S . -B build-arm64 -DBUILD_EXAMPLE:BOOL="1" -DBUILD_BENCHMARK:BOOL="1" -DBUILD_CUDA_BENCHMARK:BOOL="1" -DUSE_OPENMP:BOOL="1" -A ARM64
 
     - name: Build(arm64)
       run: cmake --build build-arm64 --config Release

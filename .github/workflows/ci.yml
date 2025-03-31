@@ -15,7 +15,6 @@ jobs:
 
     - name: Install dependencies
       run: |
-        sudo apt-get update
         sudo apt-get install -y cmake
         sudo apt-get install -y libomp-dev
         sudo apt-get install -y libopencv-dev
@@ -31,6 +30,9 @@ jobs:
 
     - name: Run benchmark tests
       run: build/benchmark
+
+    - name: Run cuda benchmark tests
+      run: build/cuda_benchmark
 
     - name: Run example-opencv tests
       run: build/example-opencv
