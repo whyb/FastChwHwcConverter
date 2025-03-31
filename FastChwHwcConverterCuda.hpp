@@ -196,7 +196,6 @@ static inline std::string compileCUDAWithNVRTC(const std::string& libraryName, c
         dlManager->unloadLibrary(libraryName);
         return "";
     }
-    std::cout << "Create Program successfully." << std::endl;
 
     // compile CUDA source code
     const char* options[] = { "-default-device", "--std=c++11" };
@@ -361,8 +360,7 @@ static inline bool initCudaFunctions(std::string& compiledPtxStr)
     }
 
     // Get cuda module kernel function(cuda_hwc2chw)
-    CUfunction func_hwc2chw;
-    cuRes = cuModuleGetFunction(&func_hwc2chw, module, "cuda_hwc2chw");
+    cuRes = cuModuleGetFunction(&hwc2chwFun, module, "cuda_hwc2chw");
     if (cuRes != 0) {
         std::cerr << "cuModuleGetFunction (cuda_hwc2chw) failed with error " << cuRes << std::endl;
         cuModuleUnload(module);
@@ -370,14 +368,14 @@ static inline bool initCudaFunctions(std::string& compiledPtxStr)
         return false;
     }
     // Get cuda module kernel function(cuda_chw2hwc)
-    CUfunction func_chw2hwc;
-    cuRes = cuModuleGetFunction(&func_chw2hwc, module, "cuda_chw2hwc");
+    cuRes = cuModuleGetFunction(&chw2hwcFun, module, "cuda_chw2hwc");
     if (cuRes != 0) {
         std::cerr << "cuModuleGetFunction (cuda_chw2hwc) failed with error " << cuRes << std::endl;
         cuModuleUnload(module);
         cuCtxDestroy(context);
         return false;
     }
+    return true;
 }
 
 static inline bool initAll()
@@ -452,15 +450,21 @@ inline void hwc2chw_cuda(
     CUresult cuRes0 = cuMemAlloc(&cuda_input_memory, input_size);
     CUresult cuRes1 = cuMemAlloc(&cuda_output_memory, output_size);
     if (cuRes0 != 0 || cuRes1 != 0) {
+        cuMemFree(cuda_input_memory);
+        cuMemFree(cuda_output_memory);
         hwc2chw<uint8_t, float>(h, w, c, src, dst, alpha); return;
     }
     // copy host memory to device memory
     CUresult cuRes2 = cuMemcpyHtoD(cuda_input_memory, src, input_size);
     if (cuRes2 != 0) {
+        cuMemFree(cuda_input_memory);
+        cuMemFree(cuda_output_memory);
         hwc2chw<uint8_t, float>(h, w, c, src, dst, alpha); return;
     }
     // call cuda function
     if (hwc2chwFun == nullptr) {
+        cuMemFree(cuda_input_memory);
+        cuMemFree(cuda_output_memory);
         hwc2chw<uint8_t, float>(h, w, c, src, dst, alpha); return;
     }
     const unsigned int blockDimX = 16, blockDimY = 16, blockDimZ = 1;
@@ -478,17 +482,25 @@ inline void hwc2chw_cuda(
         blockDimX, blockDimY, blockDimZ,
         0, nullptr, args1, nullptr);
     if (cuRes3 != 0) {
+        cuMemFree(cuda_input_memory);
+        cuMemFree(cuda_output_memory);
         hwc2chw<uint8_t, float>(h, w, c, src, dst, alpha); return;
     }
     CUresult cuRes4 = cuCtxSynchronize();
     if (cuRes4 != 0) {
+        cuMemFree(cuda_input_memory);
+        cuMemFree(cuda_output_memory);
         hwc2chw<uint8_t, float>(h, w, c, src, dst, alpha); return;
     }
     // copy device memory to host memory
     CUresult cuRes5 = cuMemcpyDtoH(dst, cuda_output_memory, output_size);
     if (cuRes5 != 0) {
+        cuMemFree(cuda_input_memory);
+        cuMemFree(cuda_output_memory);
         hwc2chw<uint8_t, float>(h, w, c, src, dst, alpha); return;
     }
+    cuMemFree(cuda_input_memory);
+    cuMemFree(cuda_output_memory);
     return;
 }
 
@@ -520,15 +532,21 @@ inline void chw2hwc_cuda(
     CUresult cuRes0 = cuMemAlloc(&cuda_input_memory, input_size);
     CUresult cuRes1 = cuMemAlloc(&cuda_output_memory, output_size);
     if (cuRes0 != 0 || cuRes1 != 0) {
+        cuMemFree(cuda_input_memory);
+        cuMemFree(cuda_output_memory);
         chw2hwc<float, uint8_t>(h, w, c, src, dst, alpha); return;
     }
     // copy host memory to device memory
     CUresult cuRes2 = cuMemcpyHtoD(cuda_input_memory, src, input_size);
     if (cuRes2 != 0) {
+        cuMemFree(cuda_input_memory);
+        cuMemFree(cuda_output_memory);
         chw2hwc<float, uint8_t>(h, w, c, src, dst, alpha); return;
     }
     // call cuda function
     if (chw2hwcFun == nullptr) {
+        cuMemFree(cuda_input_memory);
+        cuMemFree(cuda_output_memory);
         chw2hwc<float, uint8_t>(h, w, c, src, dst, alpha); return;
     }
     const unsigned int blockDimX = 16, blockDimY = 16, blockDimZ = 1;
@@ -546,16 +564,109 @@ inline void chw2hwc_cuda(
         blockDimX, blockDimY, blockDimZ,
         0, nullptr, args, nullptr);
     if (cuRes3 != 0) {
+        cuMemFree(cuda_input_memory);
+        cuMemFree(cuda_output_memory);
         chw2hwc<float, uint8_t>(h, w, c, src, dst, alpha); return;
     }
     CUresult cuRes4 = cuCtxSynchronize();
     if (cuRes4 != 0) {
+        cuMemFree(cuda_input_memory);
+        cuMemFree(cuda_output_memory);
         chw2hwc<float, uint8_t>(h, w, c, src, dst, alpha); return;
     }
     // copy device memory to host memory
     CUresult cuRes5 = cuMemcpyDtoH(dst, cuda_output_memory, output_size);
     if (cuRes5 != 0) {
+        cuMemFree(cuda_input_memory);
+        cuMemFree(cuda_output_memory);
         chw2hwc<float, uint8_t>(h, w, c, src, dst, alpha); return;
     }
+    CUresult cuRes6 = cuMemFree(cuda_input_memory);
+    CUresult cuRes7 = cuMemFree(cuda_output_memory);
+    return;
 }
+
+
+/**
+ * @brief Converts image data from HWC format to CHW format
+ *
+ * @param h Height of image
+ * @param w Width of image
+ * @param c Number of channels
+ * @param src Cuda Memory (uint8_t) Pointer to the source data in HWC format
+ * @param dst Cuda Memory (float) Pointer to the destination data in CHW format
+ * @param alpha Scaling factor
+ */
+inline void hwc2chw_cuda(
+    const size_t h, const size_t w, const size_t c,
+    CUdeviceptr src, CUdeviceptr dst,
+    const float alpha = 1.f / 255.f) {
+
+    const size_t pixel_size = h * w * c;
+    const size_t input_size = pixel_size * sizeof(uint8_t);
+    const size_t output_size = pixel_size * sizeof(float);
+
+    const unsigned int blockDimX = 16, blockDimY = 16, blockDimZ = 1;
+    const unsigned int gridDimX = ((unsigned int)w + blockDimX - 1) / blockDimX;
+    const unsigned int gridDimY = ((unsigned int)h + blockDimY - 1) / blockDimY;
+    const unsigned int gridDimZ = 1;
+    // for ready cuda kernel function(func_hwc2chw)
+    size_t arg_h_val = h;
+    size_t arg_w_val = w;
+    size_t arg_c_val = c;
+    float arg_alpha_val = alpha;
+    void* args1[] = { &arg_h_val, &arg_w_val, &arg_c_val, &src, &dst, &arg_alpha_val };
+    CUresult cuRes0 = cuLaunchKernel(
+        hwc2chwFun, gridDimX, gridDimY, gridDimZ,
+        blockDimX, blockDimY, blockDimZ,
+        0, nullptr, args1, nullptr);
+    if (cuRes0 != 0) {
+        return;
+    }
+    CUresult cuRes1 = cuCtxSynchronize();
+    if (cuRes1 != 0) {
+        return;
+    }
+    return;
+}
+
+/**
+ * @brief Converts image data from CHW format to HWC format
+ *
+ * @param c Number of channels
+ * @param h Height of image
+ * @param w Width of image
+ * @param src Cuda Memory (float) Pointer to the source data in CHW format
+ * @param dst Cuda Memory (uint8_t) Pointer to the destination data in HWC format
+ * @param alpha Scaling factor
+ */
+inline void chw2hwc_cuda(
+    const size_t c, const size_t h, const size_t w,
+    CUdeviceptr src, CUdeviceptr dst,
+    const uint8_t alpha = 255.0f) {
+    
+    const unsigned int blockDimX = 16, blockDimY = 16, blockDimZ = 1;
+    const unsigned int gridDimX = ((unsigned int)w + blockDimX - 1) / blockDimX;
+    const unsigned int gridDimY = ((unsigned int)h + blockDimY - 1) / blockDimY;
+    const unsigned int gridDimZ = 1;
+    // for ready cuda kernel function(func_hwc2chw)
+    size_t arg_c_val = c;
+    size_t arg_h_val = h;
+    size_t arg_w_val = w;
+    uint8_t arg_alpha_val = alpha;
+    void* args[] = { &arg_c_val, &arg_h_val, &arg_w_val, &src, &dst, &arg_alpha_val };
+    CUresult cuRes0 = cuLaunchKernel(
+        chw2hwcFun, gridDimX, gridDimY, gridDimZ,
+        blockDimX, blockDimY, blockDimZ,
+        0, nullptr, args, nullptr);
+    if (cuRes0 != 0) {
+        return;
+    }
+    CUresult cuRes1 = cuCtxSynchronize();
+    if (cuRes1 != 0) {
+        return;
+    }
+    return;
+}
+
 } // namespace whyb
