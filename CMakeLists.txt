@@ -13,7 +13,7 @@ option(USE_OPENMP "Use OpenMP for parallel programming" ON)
 # CMake options to control project generation
 option(BUILD_EXAMPLE "Build example target" ON)
 option(BUILD_BENCHMARK "Build benchmark target" ON)
-option(BUILD_CUDA_BENCHMARK "Build cuda benchmark target" OFF)
+option(BUILD_CUDA_BENCHMARK "Build cuda benchmark target" ON)
 option(BUILD_EXAMPLE_OPENCV "Build example-opencv target" OFF)
 
 # Check for OpenMP support if the option is enabled

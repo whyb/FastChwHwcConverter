@@ -1,5 +1,4 @@
 ﻿#include <iostream>
-#include <windows.h>
 #include <cstdint>
 #include <iomanip>
 #include <chrono>
@@ -194,7 +193,6 @@ int main() {
         }
     }
 
-cleanup:
     cuModuleUnload(module);
     cuCtxDestroy(context);
 
