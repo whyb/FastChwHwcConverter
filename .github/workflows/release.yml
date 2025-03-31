@@ -35,7 +35,7 @@ jobs:
       run: ls ./build-x64/
 
     - name: Zip binary files
-      run: zip ./bin-linux-gcc-x64.zip ./build-x64/example ./build-x64/benchmark ./build-x64/example-opencv
+      run: zip ./bin-linux-gcc-x64.zip ./build-x64/example ./build-x64/benchmark ./build-x64/cuda_benchmark ./build-x64/example-opencv
 
     - name: Archive Linux build artifacts
       uses: actions/upload-artifact@v4
@@ -73,7 +73,7 @@ jobs:
 
     - name: Zip binary files
       run: |
-        zip ./bin-windows-msvc-x64.zip .\build-x64\Release\example.exe .\build-x64\Release\benchmark.exe .\build-x64\Release\example-opencv.exe
+        zip ./bin-windows-msvc-x64.zip .\build-x64\Release\example.exe .\build-x64\Release\benchmark.exe  .\build-x64\Release\cuda_benchmark.exe .\build-x64\Release\example-opencv.exe
 
     - name: Archive Windows build artifacts
       uses: actions/upload-artifact@v4
@@ -111,7 +111,7 @@ jobs:
 
     - name: Zip binary files
       run: |
-        zip ./bin-windows-msvc-x86.zip .\build-x86\Release\example.exe .\build-x86\Release\benchmark.exe
+        zip ./bin-windows-msvc-x86.zip .\build-x86\Release\example.exe .\build-x86\Release\benchmark.exe  .\build-x86\Release\cuda_benchmark.exe
 
     - name: Archive Windows build artifacts
       uses: actions/upload-artifact@v4
@@ -149,7 +149,7 @@ jobs:
 
     - name: Zip binary files
       run: |
-        zip ./bin-windows-msvc-arm64.zip .\build-arm64\Release\example.exe .\build-arm64\Release\benchmark.exe
+        zip ./bin-windows-msvc-arm64.zip .\build-arm64\Release\example.exe .\build-arm64\Release\benchmark.exe  .\build-arm64\Release\cuda_benchmark.exe
 
     - name: Archive Windows build artifacts
       uses: actions/upload-artifact@v4
