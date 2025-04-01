@@ -2,10 +2,19 @@
 ![CI](https://github.com/whyb/FastChwHwcConverter/workflows/CI/badge.svg)
 
 ## Overview
-### for CPU (OpenMP)
-FastChwHwcConverter.hpp is a high-performance, multi-thread, header-only C++ library for converting image data formats between **HWC (Height, Width, Channels)** and **CHW (Channels, Height, Width)**. The library leverages OpenMP parallel processing to provide lightning-fast performance.
-### for GPU (CUDA)
-FastChwHwcConverterCuda.hpp is a high-performance, fully GPU hardware accelerated, C++ library for converting image data formats between **HWC (Height, Width, Channels)** and **CHW (Channels, Height, Width)**. It supports any version above CUDA 10. The compilation environment does not need to install CUDA SDK, does not need to reference any CUDA header files, and does not need to static link any external dll&so libraries. It will automatically search for CUDA's dynamic link library from the system path and dynamically load the functions inside and use them.
+### Multi-Core CPU Implementation (OpenMP)
+FastChwHwcConverter.hpp is a high-performance, multi-thread, header-only C++ library for converting image data formats between **HWC (Height, Width, Channels)** and **CHW (Channels, Height, Width)**. The library leverages OpenMP parallel processing to provide lightning-fast performance. It will use all your CPU cores to perform the conversion at full capacity.
+
+
+**Note**: If the compilation environment does not find OpenMP, or you set USE_OPENMP to OFF, it will be reduced to single-threaded conversion.
+
+
+### GPU Acceleration (CUDA)
+FastChwHwcConverterCuda.hpp is a high-performance, fully GPU hardware accelerated, C++ library for converting image data formats between **HWC (Height, Width, Channels)** and **CHW (Channels, Height, Width)**. It supports any version above CUDA 10.0+. The compilation environment does not need to install CUDA SDK, does not need to reference any CUDA header files, and does not need to static link any external dll&so libraries. It will automatically search for CUDA's dynamic link library from the system path and dynamically load the functions inside and use them.
+
+
+**Note**: If your operating environment does not support CUDA or does not meet the conditions for using CUDA acceleration, it will automatically fall back to the CPU (OpenMP) for processing.
+The functions support passing in cuda device memory and host memory parameters.
 
 
 Any similar type conversion code you find another project on GitHub will most likely only achieve performance close to the speed of [single-thread execution](#benchmark-performance-timing-results).
@@ -22,6 +31,8 @@ Any similar type conversion code you find another project on GitHub will most li
 - [Let's Converter](#lets-converter)
   - [HWC to CHW Conversion (CPU)](#hwc-to-chw-conversion-cpu)
   - [CHW to HWC Conversion (CPU)](#chw-to-hwc-conversion-cpu)
+  - [HWC to CHW Conversion (CUDA)](#hwc-to-chw-conversion-cuda)
+  - [CHW to HWC Conversion (CUDA)](#chw-to-hwc-conversion-cuda)
   - [Example](#example)
 - [Benchmark Performance Timing Results](#benchmark-performance-timing-results)
 - [Contact](#contact)
@@ -149,14 +160,56 @@ Parameters:
 * `max_v`: Maximum value for clamping (default is 255).
 
 
+### HWC to CHW Conversion (CUDA)
+The `hwc2chw_cuda` function converts image data from HWC format to CHW format.
+```cpp
+void hwc2chw_cuda(
+    const size_t h, const size_t w, const size_t c,
+    const uint8_t* src, float* dst,
+    const float alpha = 1.f/255.f
+);
+```
+
+Parameters:
+
+* `h`: Height of the image.
+* `w`: Width of the image.
+* `c`: Number of channels.
+* `src`: Pointer to the source data(host memory) in HWC format.
+* `dst`: Pointer to the destination data(host memory) in CHW format.
+* `alpha`: Scaling factor (default is 1).
+
+### CHW to HWC Conversion (CUDA)
+The `chw2hwc_cuda` function converts image data from CHW format to HWC format.
+
+```cpp
+void chw2hwc_cuda(
+    const size_t c, const size_t h, const size_t w,
+    const float* src, uint8_t* dst,
+    const uint8_t alpha = 255.0f
+);
+```
+Parameters:
+
+* `c`: Number of channels.
+* `h`: Height of the image.
+* `w`: Width of the image.
+* `src`: Pointer to the source data(host memory) in CHW format.
+* `dst`: Pointer to the destination data(host memory) in HWC format.
+* `alpha`: Scaling factor (default is 1).
+
 ### Example
-This example code(**test/example.cpp**) demonstrates how to use the FastChwHwcConverter library to convert image data from HWC format to CHW format, and then back to HWC format after AI inference.
+This example code(**test/example.cpp**) demonstrates how to use the FastChwHwcConverter and FastChwHwcConverterCuda library to convert image data from HWC format to CHW format, and then back to HWC format after AI inference.
 
 ```cpp
 #include "FastChwHwcConverter.hpp"
+#include "FastChwHwcConverterCuda.hpp"
 #include <vector>
+#include <cstdint>
+#include <iostream>
 
-int main() {
+void cpu_example()
+{
     const size_t c = 3;
     const size_t w = 1920;
     const size_t h = 1080;
@@ -180,6 +233,40 @@ int main() {
     // step 5. Convert CHW(Channels, Height, Width) to HWC(Height, Width, Channels)
     whyb::chw2hwc<float, uint8_t>(c, h, w, (float*)out_float.data(), (uint8_t*)out_uint8.data());
 
+    std::cout << "cpu example done" << std::endl;
+}
+
+void cuda_example()
+{
+    const size_t c = 3;
+    const size_t w = 1920;
+    const size_t h = 1080;
+
+    // step 1. Defining input and output 
+    const size_t pixel_size = h * w * c;
+    std::vector<uint8_t> src_uint8(pixel_size); // Source data(hwc)
+    std::vector<float> src_float(pixel_size); // Source data(chw)
+
+    std::vector<float> out_float(pixel_size); // Inference output data(chw)
+    std::vector<uint8_t> out_uint8(pixel_size); // Inference output data(hwc)
+
+    // step 2. Load image data to src_uint8(8U3C)
+
+    // step 3. Convert HWC(Height, Width, Channels) to CHW(Channels, Height, Width)
+    whyb::hwc2chw_cuda(h, w, c, (uint8_t*)src_uint8.data(), (float*)src_float.data());
+
+    // step 4. Do AI inference
+    // input: src_float ==infer==> output: out_float
+
+    // step 5. Convert CHW(Channels, Height, Width) to HWC(Height, Width, Channels)
+    whyb::chw2hwc_cuda(c, h, w, (float*)out_float.data(), (uint8_t*)out_uint8.data());
+
+    std::cout << "cuda example done" << std::endl;
+}
+
+int main() {
+    cpu_example();   // use cpu converter
+    cuda_example();  // use cuda converter
     return 0;
 }
 ```

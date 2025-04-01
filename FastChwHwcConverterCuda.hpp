@@ -22,6 +22,7 @@
 #include "DynamicLibraryManager.hpp"
 #include "FastChwHwcConverter.hpp"
 
+#include <iostream>
 #include <vector>
 #include <string>
 #include <filesystem>
