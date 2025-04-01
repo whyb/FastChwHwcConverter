@@ -13,7 +13,8 @@ option(USE_OPENMP "Use OpenMP for parallel programming" ON)
 # CMake options to control project generation
 option(BUILD_EXAMPLE "Build example target" ON)
 option(BUILD_BENCHMARK "Build benchmark target" ON)
-option(BUILD_CUDA_BENCHMARK "Build cuda benchmark target" ON)
+option(BUILD_CUDA_BENCHMARK "Build NVIDIA CUDA benchmark target" ON)
+option(BUILD_ROCM_BENCHMARK "Build AMD ROCm benchmark target" ON)
 option(BUILD_EXAMPLE_OPENCV "Build example-opencv target" OFF)
 
 # Check for OpenMP support if the option is enabled
@@ -51,6 +52,11 @@ endif()
 if(BUILD_CUDA_BENCHMARK)
     add_executable(cuda_benchmark DynamicLibraryManager.hpp FastChwHwcConverterCuda.hpp test/cuda_benchmark.cpp)
     target_include_directories(cuda_benchmark PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+endif()
+
+if(BUILD_ROCM_BENCHMARK)
+    add_executable(rocm_benchmark DynamicLibraryManager.hpp FastChwHwcConverterROCm.hpp test/rocm_benchmark.cpp)
+    target_include_directories(rocm_benchmark PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 endif()
 
 if(BUILD_EXAMPLE_OPENCV)
