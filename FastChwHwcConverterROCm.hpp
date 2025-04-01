@@ -70,16 +70,28 @@ typedef void* hipCtx_t;
 typedef void* hipModule_t;
 typedef void* hipFunction_t;
 typedef unsigned long long hipDeviceptr_t;
+typedef void* hipStream_t;
+typedef struct dim3 {
+    uint32_t x;  ///< x
+    uint32_t y;  ///< y
+    uint32_t z;  ///< z
+    constexpr dim3(uint32_t _x = 1, uint32_t _y = 1, uint32_t _z = 1) : x(_x), y(_y), z(_z) {};
+} dim3;
 
 // AMD ROCm Driver API function type define
 typedef hipError_t(*hipInit_t)(unsigned int);
 typedef hipError_t(*hipDeviceGet_t)(hipDevice_t*, int);
 typedef hipError_t(*hipCtxCreate_t)(hipCtx_t*, unsigned int, hipDevice_t);
 typedef hipError_t(*hipCtxDestroy_t)(hipCtx_t);
+typedef hipError_t(*hipStreamCreate_t)(hipStream_t*);
+typedef hipError_t(*hipStreamDestroy_t)(hipStream_t);
+typedef hipError_t(*hipStreamSynchronize_t)(hipStream_t);
 typedef hipError_t(*hipModuleLoadDataEx_t)(hipModule_t*, const void*, unsigned int, int*, void**);
 typedef hipError_t(*hipModuleUnload_t)(hipModule_t);
 typedef hipError_t(*hipModuleGetFunction_t)(hipFunction_t*, hipModule_t, const char*);
-typedef hipError_t(*hipLaunchKernel_t)(hipFunction_t, unsigned int, unsigned int, unsigned int, unsigned int, unsigned int, unsigned int, unsigned int, hipCtx_t, void**, void**);
+//typedef hipError_t(*hipLaunchKernel_t)(hipFunction_t, unsigned int, unsigned int, unsigned int, unsigned int, unsigned int, unsigned int, unsigned int, hipCtx_t, void**, void**);
+typedef hipError_t(*hipLaunchKernel_t)(hipFunction_t, dim3, dim3, void**, size_t, hipStream_t);
+//typedef hipError_t(*hipModuleLaunchKernel_t)(hipFunction_t, unsigned int, unsigned int, unsigned int, unsigned int, unsigned int, unsigned int, unsigned int, hipStream_t, void**, void**);
 typedef hipError_t(*hipCtxSynchronize_t)(void);
 //typedef hipError_t(*hipMemAlloc_t)(hipDeviceptr_t*, size_t);
 typedef hipError_t(*hipMalloc_t)(hipDeviceptr_t*, size_t);
@@ -100,6 +112,9 @@ static hipInit_t hipInit = nullptr;
 static hipDeviceGet_t hipDeviceGet = nullptr;
 static hipCtxCreate_t hipCtxCreate = nullptr;
 static hipCtxDestroy_t hipCtxDestroy = nullptr;
+static hipStreamCreate_t hipStreamCreate = nullptr;
+static hipStreamDestroy_t hipStreamDestroy = nullptr;
+static hipStreamSynchronize_t hipStreamSynchronize = nullptr;
 static hipModuleLoadDataEx_t hipModuleLoadDataEx = nullptr;
 static hipModuleUnload_t hipModuleUnload = nullptr;
 static hipModuleGetFunction_t hipModuleGetFunction = nullptr;
@@ -149,6 +164,7 @@ typedef unsigned char uint8_t;
 
 static hipFunction_t hwc2chwFun = nullptr;
 static hipFunction_t chw2hwcFun = nullptr;
+static hipStream_t stream = nullptr;
 
 enum struct InitStatusEnum : int
 {
@@ -320,6 +336,9 @@ static inline bool initROCmDriverAPI()
     hipDeviceGet = (hipDeviceGet_t)(dlManager->getFunction(driver_dll, "hipDeviceGet"));
     hipCtxCreate = (hipCtxCreate_t)(dlManager->getFunction(driver_dll, "hipCtxCreate"));
     hipCtxDestroy = (hipCtxDestroy_t)(dlManager->getFunction(driver_dll, "hipCtxDestroy"));
+    hipStreamCreate = (hipStreamCreate_t)(dlManager->getFunction(driver_dll, "hipStreamCreate"));
+    hipStreamDestroy = (hipStreamDestroy_t)(dlManager->getFunction(driver_dll, "hipStreamDestroy"));
+    hipStreamSynchronize = (hipStreamSynchronize_t)(dlManager->getFunction(driver_dll, "hipStreamSynchronize"));
     hipModuleLoadDataEx = (hipModuleLoadDataEx_t)(dlManager->getFunction(driver_dll, "hipModuleLoadDataEx"));
     hipModuleUnload = (hipModuleUnload_t)(dlManager->getFunction(driver_dll, "hipModuleUnload"));
     hipModuleGetFunction = (hipModuleGetFunction_t)(dlManager->getFunction(driver_dll, "hipModuleGetFunction"));
@@ -332,7 +351,9 @@ static inline bool initROCmDriverAPI()
     hipMemcpyHtoD = (hipMemcpyHtoD_t)(dlManager->getFunction(driver_dll, "hipMemcpyHtoD"));
     hipMemcpyDtoH = (hipMemcpyDtoH_t)(dlManager->getFunction(driver_dll, "hipMemcpyDtoH"));
 
-    if (!hipInit || !hipDeviceGet || !hipCtxCreate || !hipModuleLoadDataEx ||
+    if (!hipInit || !hipDeviceGet || !hipCtxCreate || 
+        !hipStreamCreate || !hipStreamDestroy || !hipStreamSynchronize ||
+        !hipModuleLoadDataEx ||
         !hipModuleGetFunction || !hipLaunchKernel || !hipCtxSynchronize ||
         !hipMalloc || !hipFree || !hipMemcpyHtoD || !hipMemcpyDtoH) {
         std::cerr << "Failed to load one or more AMD ROCm Driver API functions." << std::endl;
@@ -354,10 +375,16 @@ static inline bool initROCmFunctions(std::string& compiledPtxStr)
         std::cerr << "hipDeviceGet failed with error " << hipRes << std::endl;
         return false;
     }
-    hipCtx_t context;
-    hipRes = hipCtxCreate(&context, 0, device);
+    //hipCtx_t context;
+    //hipRes = hipCtxCreate(&context, 0, device);
+    //if (hipRes != 0) {
+    //    std::cerr << "hipCtxCreate failed with error " << hipRes << std::endl;
+    //    return false;
+    //}
+    //hipStream_t stream;
+    hipRes = hipStreamCreate(&stream);
     if (hipRes != 0) {
-        std::cerr << "hipCtxCreate failed with error " << hipRes << std::endl;
+        std::cerr << "hipStreamCreate failed with error " << hipRes << std::endl;
         return false;
     }
 
@@ -366,7 +393,8 @@ static inline bool initROCmFunctions(std::string& compiledPtxStr)
     hipRes = hipModuleLoadDataEx(&module, compiledPtxStr.c_str(), 0, nullptr, nullptr);
     if (hipRes != 0) {
         std::cerr << "hipModuleLoadDataEx failed with error " << hipRes << std::endl;
-        hipCtxDestroy(context);
+        //hipCtxDestroy(context);
+        hipStreamDestroy(stream);
         return false;
     }
 
@@ -375,7 +403,8 @@ static inline bool initROCmFunctions(std::string& compiledPtxStr)
     if (hipRes != 0) {
         std::cerr << "hipModuleGetFunction (rocm_hwc2chw) failed with error " << hipRes << std::endl;
         hipModuleUnload(module);
-        hipCtxDestroy(context);
+        //hipCtxDestroy(context);
+        hipStreamDestroy(stream);
         return false;
     }
     // Get ROCm module kernel function(rocm_chw2hwc)
@@ -383,7 +412,8 @@ static inline bool initROCmFunctions(std::string& compiledPtxStr)
     if (hipRes != 0) {
         std::cerr << "hipModuleGetFunction (rocm_chw2hwc) failed with error " << hipRes << std::endl;
         hipModuleUnload(module);
-        hipCtxDestroy(context);
+        //hipCtxDestroy(context);
+        hipStreamDestroy(stream);
         return false;
     }
     return true;
@@ -489,15 +519,17 @@ inline void hwc2chw_rocm(
     float arg_alpha_val = alpha;
     void* args1[] = { &arg_h_val, &arg_w_val, &arg_c_val, &rocm_input_memory, &rocm_output_memory, &arg_alpha_val };
     hipError_t hipRes3 = hipLaunchKernel(
-        hwc2chwFun, gridDimX, gridDimY, gridDimZ,
-        blockDimX, blockDimY, blockDimZ,
-        0, nullptr, args1, nullptr);
+        hwc2chwFun, 
+        dim3(gridDimX, gridDimY, gridDimZ),
+        dim3(blockDimX, blockDimY, blockDimZ),
+        nullptr, 0, stream);
     if (hipRes3 != 0) {
         hipFree(rocm_input_memory);
         hipFree(rocm_output_memory);
         hwc2chw<uint8_t, float>(h, w, c, src, dst, alpha); return;
     }
-    hipError_t hipRes4 = hipCtxSynchronize();
+    //hipError_t hipRes4 = hipCtxSynchronize();
+    hipError_t hipRes4 = hipStreamSynchronize(stream);
     if (hipRes4 != 0) {
         hipFree(rocm_input_memory);
         hipFree(rocm_output_memory);
@@ -571,15 +603,17 @@ inline void chw2hwc_rocm(
     uint8_t arg_alpha_val = alpha;
     void* args[] = { &arg_c_val, &arg_h_val, &arg_w_val, &rocm_input_memory, &rocm_output_memory, &arg_alpha_val };
     hipError_t hipRes3 = hipLaunchKernel(
-        chw2hwcFun, gridDimX, gridDimY, gridDimZ,
-        blockDimX, blockDimY, blockDimZ,
-        0, nullptr, args, nullptr);
+        chw2hwcFun,
+        dim3(gridDimX, gridDimY, gridDimZ),
+        dim3(blockDimX, blockDimY, blockDimZ),
+        nullptr, 0, stream);
     if (hipRes3 != 0) {
         hipFree(rocm_input_memory);
         hipFree(rocm_output_memory);
         chw2hwc<float, uint8_t>(h, w, c, src, dst, alpha); return;
     }
-    hipError_t hipRes4 = hipCtxSynchronize();
+    //hipError_t hipRes4 = hipCtxSynchronize();
+    hipError_t hipRes4 = hipStreamSynchronize(stream);
     if (hipRes4 != 0) {
         hipFree(rocm_input_memory);
         hipFree(rocm_output_memory);
@@ -628,13 +662,15 @@ inline void hwc2chw_rocm(
     float arg_alpha_val = alpha;
     void* args1[] = { &arg_h_val, &arg_w_val, &arg_c_val, &src, &dst, &arg_alpha_val };
     hipError_t hipRes0 = hipLaunchKernel(
-        hwc2chwFun, gridDimX, gridDimY, gridDimZ,
-        blockDimX, blockDimY, blockDimZ,
-        0, nullptr, args1, nullptr);
+        hwc2chwFun,
+        dim3(gridDimX, gridDimY, gridDimZ),
+        dim3(blockDimX, blockDimY, blockDimZ),
+        nullptr, 0, stream);
     if (hipRes0 != 0) {
         return;
     }
-    hipError_t hipRes1 = hipCtxSynchronize();
+    //hipError_t hipRes1 = hipCtxSynchronize();
+    hipError_t hipRes1 = hipStreamSynchronize(stream);
     if (hipRes1 != 0) {
         return;
     }
@@ -667,13 +703,15 @@ inline void chw2hwc_rocm(
     uint8_t arg_alpha_val = alpha;
     void* args[] = { &arg_c_val, &arg_h_val, &arg_w_val, &src, &dst, &arg_alpha_val };
     hipError_t hipRes0 = hipLaunchKernel(
-        chw2hwcFun, gridDimX, gridDimY, gridDimZ,
-        blockDimX, blockDimY, blockDimZ,
-        0, nullptr, args, nullptr);
+        chw2hwcFun,
+        dim3(gridDimX, gridDimY, gridDimZ),
+        dim3(blockDimX, blockDimY, blockDimZ),
+        nullptr, 0, stream);
     if (hipRes0 != 0) {
         return;
     }
-    hipError_t hipRes1 = hipCtxSynchronize();
+    //hipError_t hipRes1 = hipCtxSynchronize();
+    hipError_t hipRes1 = hipStreamSynchronize(stream);
     if (hipRes1 != 0) {
         return;
     }
