@@ -3,24 +3,34 @@
 
 ## Overview
 ### Multi-Core CPU Implementation (OpenMP)
-FastChwHwcConverter.hpp is a high-performance, multi-thread, header-only C++ library for converting image data formats between **HWC (Height, Width, Channels)** and **CHW (Channels, Height, Width)**. The library leverages OpenMP parallel processing to provide lightning-fast performance. It will use all your CPU cores to perform the conversion at full capacity.
-
+FastChwHwcConverter.hpp is a high-performance, multi-threaded, header-only C++ library for converting image data formats between **HWC (Height, Width, Channels)** and **CHW (Channels, Height, Width)**. It leverages OpenMP for parallel processing, utilizing all CPU cores for maximum performance.
 
 **Note**: If the compilation environment does not find OpenMP, or you set USE_OPENMP to OFF, it will be reduced to single-threaded conversion.
 
 
-### GPU Acceleration (CUDA)
-FastChwHwcConverterCuda.hpp is a high-performance, fully GPU hardware accelerated, C++ library for converting image data formats between **HWC (Height, Width, Channels)** and **CHW (Channels, Height, Width)**. It supports any version above CUDA 10.0+. The compilation environment does not need to install CUDA SDK, does not need to reference any CUDA header files, and does not need to static link any external dll&so libraries. It will automatically search for CUDA's dynamic link library from the system path and dynamically load the functions inside and use them.
+### GPU Acceleration (NVIDIA CUDA)
+FastChwHwcConverterCuda.hpp is a high-performance, GPU-accelerated library for converting image data formats between **HWC** and **CHW**, supporting CUDA versions 10.0+ and above. It requires no installation of the CUDA SDK, header files, or static linking. The library dynamically loads CUDA libraries from the system path. It will automatically search for CUDA's dynamic link library from the system path and dynamically load the functions inside and use them.
 
 
 **Note**: If your operating environment does not support CUDA or does not meet the conditions for using CUDA acceleration, it will automatically fall back to the CPU (OpenMP) for processing.
 The functions support passing in cuda device memory and host memory parameters.
 
 
+### GPU Acceleration (AMD ROCm)
+FastChwHwcConverterROCm.hpp is a high-performance, GPU-accelerated library for converting image data formats between **HWC** and **CHW**, supporting ROCm versions 5.0+ and above. Like the CUDA library, it does not require the ROCm (HIP) SDK, header files, or static linking, and dynamically loads ROCm libraries from the system path.
+
+
+**Note**: If your operating environment does not support ROCm or does not meet the conditions for using ROCm acceleration, it will automatically fall back to the CPU (OpenMP) for processing.
+The functions support passing in ROCm device memory and host memory parameters.
+
+
 Any similar type conversion code you find another project on GitHub will most likely only achieve performance close to the speed of [single-thread execution](#benchmark-performance-timing-results).
 
 ## Table of Contents
 - [Overview](#overview)
+  - [Multi-Core CPU Implementation (OpenMP)](#multi-core-cpu-implementation)
+  - [GPU Acceleration (NVIDIA CUDA)](#gpu-acceleration-nvidia-cuda)
+  - [GPU Acceleration (AMD ROCm)](#gpu-acceleration-amd-rocm)
 - [The difference between CHW and HWC](#the-difference-between-chw-and-hwc)
   - [CHW Format](#chw-format)
   - [HWC Format](#hwc-format)
@@ -33,6 +43,8 @@ Any similar type conversion code you find another project on GitHub will most li
   - [CHW to HWC Conversion (CPU)](#chw-to-hwc-conversion-cpu)
   - [HWC to CHW Conversion (CUDA)](#hwc-to-chw-conversion-cuda)
   - [CHW to HWC Conversion (CUDA)](#chw-to-hwc-conversion-cuda)
+  - [HWC to CHW Conversion (ROCm)](#hwc-to-chw-conversion-rocm)
+  - [CHW to HWC Conversion (ROCm)](#chw-to-hwc-conversion-rocm)
   - [Example](#example)
 - [Benchmark Performance Timing Results](#benchmark-performance-timing-results)
 - [Contact](#contact)
@@ -74,8 +86,10 @@ The conversion between HWC (Height-Width-Channel) and CHW (Channel-Height-Width)
 
 ## Features
 - **High-Performance**: Utilizes OpenMP for parallel processing. Make full use of CPU multi-core features.
+- **GPU Optimization**: Fully leverages NVIDIA CUDA and AMD ROCm technologies to harness the computational power of GPUs, accelerating performance for intensive workloads.
 - **Header-Only**: Include **ONLY** a single header file. Easy to integrate into your C/C++ project. [example](#example).
 - **Flexible**: Supports scaling, clamping, and normalization of image data, any data type.
+- **Lightweight & SDK-Free**: No dependency on any external SDKs like CUDA SDK or HIP SDK. The project requires no additional header files or static library linkage, making it clean and easy to deploy.
 
 ## Installation
 ### for CPU (OpenMP)
@@ -197,6 +211,46 @@ Parameters:
 * `src`: Pointer to the source data(host memory) in CHW format.
 * `dst`: Pointer to the destination data(host memory) in HWC format.
 * `alpha`: Scaling factor (default is 1).
+
+
+### HWC to CHW Conversion (ROCm)
+The `hwc2chw_rocm` function converts image data from HWC format to CHW format.
+```cpp
+void hwc2chw_rocm(
+    const size_t h, const size_t w, const size_t c,
+    const uint8_t* src, float* dst,
+    const float alpha = 1.f/255.f
+);
+```
+
+Parameters:
+
+* `h`: Height of the image.
+* `w`: Width of the image.
+* `c`: Number of channels.
+* `src`: Pointer to the source data(host memory) in HWC format.
+* `dst`: Pointer to the destination data(host memory) in CHW format.
+* `alpha`: Scaling factor (default is 1).
+
+### CHW to HWC Conversion (ROCm)
+The `chw2hwc_rocm` function converts image data from CHW format to HWC format.
+
+```cpp
+void chw2hwc_rocm(
+    const size_t c, const size_t h, const size_t w,
+    const float* src, uint8_t* dst,
+    const uint8_t alpha = 255.0f
+);
+```
+Parameters:
+
+* `c`: Number of channels.
+* `h`: Height of the image.
+* `w`: Width of the image.
+* `src`: Pointer to the source data(host memory) in CHW format.
+* `dst`: Pointer to the destination data(host memory) in HWC format.
+* `alpha`: Scaling factor (default is 1).
+
 
 ### Example
 This example code(**test/example.cpp**) demonstrates how to use the FastChwHwcConverter and FastChwHwcConverterCuda library to convert image data from HWC format to CHW format, and then back to HWC format after AI inference.
