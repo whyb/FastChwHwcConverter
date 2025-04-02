@@ -166,20 +166,20 @@ typedef unsigned char uint8_t;
 
 )";
 
-static hipFunction_t hwc2chwFun = nullptr;
-static hipFunction_t chw2hwcFun = nullptr;
+static hipFunction_t hwc2chwROCmFun = nullptr;
+static hipFunction_t chw2hwcROCmFun = nullptr;
 static hipStream_t stream = nullptr;
 static hipModule_t module = nullptr;
 
-enum struct InitStatusEnum : int
+enum struct InitROCmStatusEnum : int
 {
     Ready = 0,
     Inited = 1,
     Failed = 2,
 };
-static InitStatusEnum initStatus = InitStatusEnum::Ready;
-static std::string lastErrorStr = "";
-static std::mutex mutex;
+static InitROCmStatusEnum initROCmStatus = InitROCmStatusEnum::Ready;
+static std::string lastROCmErrorStr = "";
+static std::mutex ROCmMutex;
 
 namespace whyb {
 
@@ -418,7 +418,7 @@ static inline bool initROCmFunctions(std::string& compiledPtxStr)
     }
 
     // Get ROCm module kernel function(rocm_hwc2chw)
-    hipRes = hipModuleGetFunction(&hwc2chwFun, module, "rocm_hwc2chw");
+    hipRes = hipModuleGetFunction(&hwc2chwROCmFun, module, "rocm_hwc2chw");
     if (hipRes != 0) {
         std::cerr << "hipModuleGetFunction (rocm_hwc2chw) failed with error " << hipRes << std::endl;
         hipModuleUnload(module);
@@ -427,7 +427,7 @@ static inline bool initROCmFunctions(std::string& compiledPtxStr)
         return false;
     }
     // Get ROCm module kernel function(rocm_chw2hwc)
-    hipRes = hipModuleGetFunction(&chw2hwcFun, module, "rocm_chw2hwc");
+    hipRes = hipModuleGetFunction(&chw2hwcROCmFun, module, "rocm_chw2hwc");
     if (hipRes != 0) {
         std::cerr << "hipModuleGetFunction (rocm_chw2hwc) failed with error " << hipRes << std::endl;
         hipModuleUnload(module);
@@ -438,46 +438,46 @@ static inline bool initROCmFunctions(std::string& compiledPtxStr)
     return true;
 }
 
-static inline bool initAll()
+static inline bool initAllROCm()
 {
-    std::lock_guard<std::mutex> lock(mutex);
-    if (initStatus == InitStatusEnum::Ready) {
+    std::lock_guard<std::mutex> lock(ROCmMutex);
+    if (initROCmStatus == InitROCmStatusEnum::Ready) {
         std::string hiprtc_module_filename = findHIPRTCModuleName();
         if (hiprtc_module_filename.empty()) {
             std::cerr << "Could not found AMD ROCm HIPRTC dll failed." << std::endl;
-            lastErrorStr = "Could not found AMD ROCm HIPRTC dll failed.";
-            initStatus = InitStatusEnum::Failed;
+            lastROCmErrorStr = "Could not found AMD ROCm HIPRTC dll failed.";
+            initROCmStatus = InitROCmStatusEnum::Failed;
             return false;
         }
         std::string code_str = compileROCmWithHIPRTC(hiprtc_module_filename, rocmSource);
         if (code_str.empty()) {
             std::cerr << "Compile ROCm Source code failed." << std::endl;
-            lastErrorStr = "Compile ROCm Source code failed.";
-            initStatus = InitStatusEnum::Failed;
+            lastROCmErrorStr = "Compile ROCm Source code failed.";
+            initROCmStatus = InitROCmStatusEnum::Failed;
             return false;
         }
         bool init_rocm_driver = initROCmDriverAPI();
         if (!init_rocm_driver) {
             std::cerr << "Failed to load ROCm Driver API functions." << std::endl;
-            lastErrorStr = "Failed to load ROCm Driver API functions.";
-            initStatus = InitStatusEnum::Failed;
+            lastROCmErrorStr = "Failed to load ROCm Driver API functions.";
+            initROCmStatus = InitROCmStatusEnum::Failed;
             return false;
         }
         bool init_rocm_functions = initROCmFunctions(code_str);
         if (!init_rocm_functions) {
             std::cerr << "Failed to load ROCm Driver API functions." << std::endl;
-            lastErrorStr = "Failed to load ROCm Driver API functions.";
-            initStatus = InitStatusEnum::Failed;
+            lastROCmErrorStr = "Failed to load ROCm Driver API functions.";
+            initROCmStatus = InitROCmStatusEnum::Failed;
             return false;
         }
-        initStatus = InitStatusEnum::Inited;
+        initROCmStatus = InitROCmStatusEnum::Inited;
         return true;
     }
-    else if (initStatus == InitStatusEnum::Inited) {
+    else if (initROCmStatus == InitROCmStatusEnum::Inited) {
         return true;
     }
-    else if (initStatus == InitStatusEnum::Failed) {
-        std::cerr << "Init Failed. Last error: " << lastErrorStr << std::endl;
+    else if (initROCmStatus == InitROCmStatusEnum::Failed) {
+        std::cerr << "Init Failed. Last error: " << lastROCmErrorStr << std::endl;
         return false;
     }
 }
@@ -522,7 +522,7 @@ inline void hwc2chw_rocm(
         hwc2chw<uint8_t, float>(h, w, c, src, dst, alpha); return;
     }
     // call rocm function
-    if (hwc2chwFun == nullptr) {
+    if (hwc2chwROCmFun == nullptr) {
         hipFreeAsync(rocm_input_memory, stream);
         hipFreeAsync(rocm_output_memory, stream);
         hwc2chw<uint8_t, float>(h, w, c, src, dst, alpha); return;
@@ -538,7 +538,7 @@ inline void hwc2chw_rocm(
     float arg_alpha_val = alpha;
     void* args[] = { &arg_h_val, &arg_w_val, &arg_c_val, &rocm_input_memory, &rocm_output_memory, &arg_alpha_val };
     hipError_t hipRes3 = hipModuleLaunchKernel(
-        hwc2chwFun,
+        hwc2chwROCmFun,
         gridDimX, gridDimY, gridDimZ,
         blockDimX, blockDimY, blockDimZ,
         0, stream, args, nullptr);
@@ -607,7 +607,7 @@ inline void chw2hwc_rocm(
         chw2hwc<float, uint8_t>(h, w, c, src, dst, alpha); return;
     }
     // call rocm function
-    if (chw2hwcFun == nullptr) {
+    if (chw2hwcROCmFun == nullptr) {
         hipFreeAsync(rocm_input_memory, stream);
         hipFreeAsync(rocm_output_memory, stream);
         chw2hwc<float, uint8_t>(h, w, c, src, dst, alpha); return;
@@ -623,7 +623,7 @@ inline void chw2hwc_rocm(
     uint8_t arg_alpha_val = alpha;
     void* args[] = { &arg_c_val, &arg_h_val, &arg_w_val, &rocm_input_memory, &rocm_output_memory, &arg_alpha_val };
     hipError_t hipRes3 = hipModuleLaunchKernel(
-        hwc2chwFun,
+        hwc2chwROCmFun,
         gridDimX, gridDimY, gridDimZ,
         blockDimX, blockDimY, blockDimZ,
         0, stream, args, nullptr);
@@ -683,7 +683,7 @@ inline void hwc2chw_rocm(
     float arg_alpha_val = alpha;
     void* args[] = { &arg_h_val, &arg_w_val, &arg_c_val, &src, &dst, &arg_alpha_val };
     hipError_t hipRes0 = hipModuleLaunchKernel(
-        hwc2chwFun,
+        hwc2chwROCmFun,
         gridDimX, gridDimY, gridDimZ,
         blockDimX, blockDimY, blockDimZ,
         0, stream, args, nullptr);
@@ -724,7 +724,7 @@ inline void chw2hwc_rocm(
     uint8_t arg_alpha_val = alpha;
     void* args[] = { &arg_c_val, &arg_h_val, &arg_w_val, &src, &dst, &arg_alpha_val };
     hipError_t hipRes0 = hipModuleLaunchKernel(
-        hwc2chwFun,
+        hwc2chwROCmFun,
         gridDimX, gridDimY, gridDimZ,
         blockDimX, blockDimY, blockDimZ,
         0, stream, args, nullptr);

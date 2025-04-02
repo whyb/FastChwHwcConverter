@@ -142,18 +142,18 @@ typedef unsigned char uint8_t;
 
 )";
 
-static CUfunction hwc2chwFun = nullptr;
-static CUfunction chw2hwcFun = nullptr;
+static CUfunction hwc2chwCUDAFun = nullptr;
+static CUfunction chw2hwcCUDAFun = nullptr;
 
-enum struct InitStatusEnum : int
+enum struct InitCUDAStatusEnum : int
 {
     Ready = 0,
     Inited = 1,
     Failed = 2,
 };
-static InitStatusEnum initStatus = InitStatusEnum::Ready;
-static std::string lastErrorStr = "";
-static std::mutex mutex;
+static InitCUDAStatusEnum initCUDAStatus = InitCUDAStatusEnum::Ready;
+static std::string lastCUDAErrorStr = "";
+static std::mutex CUDAMutex;
 
 namespace whyb {
 
@@ -361,7 +361,7 @@ static inline bool initCudaFunctions(std::string& compiledPtxStr)
     }
 
     // Get cuda module kernel function(cuda_hwc2chw)
-    cuRes = cuModuleGetFunction(&hwc2chwFun, module, "cuda_hwc2chw");
+    cuRes = cuModuleGetFunction(&hwc2chwCUDAFun, module, "cuda_hwc2chw");
     if (cuRes != 0) {
         std::cerr << "cuModuleGetFunction (cuda_hwc2chw) failed with error " << cuRes << std::endl;
         cuModuleUnload(module);
@@ -369,7 +369,7 @@ static inline bool initCudaFunctions(std::string& compiledPtxStr)
         return false;
     }
     // Get cuda module kernel function(cuda_chw2hwc)
-    cuRes = cuModuleGetFunction(&chw2hwcFun, module, "cuda_chw2hwc");
+    cuRes = cuModuleGetFunction(&chw2hwcCUDAFun, module, "cuda_chw2hwc");
     if (cuRes != 0) {
         std::cerr << "cuModuleGetFunction (cuda_chw2hwc) failed with error " << cuRes << std::endl;
         cuModuleUnload(module);
@@ -381,44 +381,44 @@ static inline bool initCudaFunctions(std::string& compiledPtxStr)
 
 static inline bool initAll()
 {
-    std::lock_guard<std::mutex> lock(mutex);
-    if (initStatus == InitStatusEnum::Ready) {
+    std::lock_guard<std::mutex> lock(CUDAMutex);
+    if (initCUDAStatus == InitCUDAStatusEnum::Ready) {
         std::string nvrtc_module_filename = findNVRTCModuleName();
         if (nvrtc_module_filename.empty()) {
             std::cerr << "Could not found CUDA NVRTC dll failed." << std::endl;
-            lastErrorStr = "Could not found CUDA NVRTC dll failed.";
-            initStatus = InitStatusEnum::Failed;
+            lastCUDAErrorStr = "Could not found CUDA NVRTC dll failed.";
+            initCUDAStatus = InitCUDAStatusEnum::Failed;
             return false;
         }
         std::string ptx_str = compileCUDAWithNVRTC(nvrtc_module_filename, cudaSource);
         if (ptx_str.empty()) {
             std::cerr << "Compile CUDA Source code failed." << std::endl;
-            lastErrorStr = "Compile CUDA Source code failed.";
-            initStatus = InitStatusEnum::Failed;
+            lastCUDAErrorStr = "Compile CUDA Source code failed.";
+            initCUDAStatus = InitCUDAStatusEnum::Failed;
             return false;
         }
         bool init_cuda_driver = initCudaDriverAPI();
         if (!init_cuda_driver) {
             std::cerr << "Failed to load CUDA Driver API functions." << std::endl;
-            lastErrorStr = "Failed to load CUDA Driver API functions.";
-            initStatus = InitStatusEnum::Failed;
+            lastCUDAErrorStr = "Failed to load CUDA Driver API functions.";
+            initCUDAStatus = InitCUDAStatusEnum::Failed;
             return false;
         }
         bool init_cuda_functions = initCudaFunctions(ptx_str);
         if (!init_cuda_functions) {
             std::cerr << "Failed to load CUDA Driver API functions." << std::endl;
-            lastErrorStr = "Failed to load CUDA Driver API functions.";
-            initStatus = InitStatusEnum::Failed;
+            lastCUDAErrorStr = "Failed to load CUDA Driver API functions.";
+            initCUDAStatus = InitCUDAStatusEnum::Failed;
             return false;
         }
-        initStatus = InitStatusEnum::Inited;
+        initCUDAStatus = InitCUDAStatusEnum::Inited;
         return true;
     }
-    else if (initStatus == InitStatusEnum::Inited) {
+    else if (initCUDAStatus == InitCUDAStatusEnum::Inited) {
         return true;
     }
-    else if (initStatus == InitStatusEnum::Failed) {
-        std::cerr << "Init Failed. Last error: " << lastErrorStr << std::endl;
+    else if (initCUDAStatus == InitCUDAStatusEnum::Failed) {
+        std::cerr << "Init Failed. Last error: " << lastCUDAErrorStr << std::endl;
         return false;
     }
 }
@@ -463,7 +463,7 @@ inline void hwc2chw_cuda(
         hwc2chw<uint8_t, float>(h, w, c, src, dst, alpha); return;
     }
     // call cuda function
-    if (hwc2chwFun == nullptr) {
+    if (hwc2chwCUDAFun == nullptr) {
         cuMemFree(cuda_input_memory);
         cuMemFree(cuda_output_memory);
         hwc2chw<uint8_t, float>(h, w, c, src, dst, alpha); return;
@@ -479,7 +479,7 @@ inline void hwc2chw_cuda(
     float arg_alpha_val = alpha;
     void* args1[] = { &arg_h_val, &arg_w_val, &arg_c_val, &cuda_input_memory, &cuda_output_memory, &arg_alpha_val };
     CUresult cuRes3 = cuLaunchKernel(
-        hwc2chwFun, gridDimX, gridDimY, gridDimZ,
+        hwc2chwCUDAFun, gridDimX, gridDimY, gridDimZ,
         blockDimX, blockDimY, blockDimZ,
         0, nullptr, args1, nullptr);
     if (cuRes3 != 0) {
@@ -545,7 +545,7 @@ inline void chw2hwc_cuda(
         chw2hwc<float, uint8_t>(h, w, c, src, dst, alpha); return;
     }
     // call cuda function
-    if (chw2hwcFun == nullptr) {
+    if (chw2hwcCUDAFun == nullptr) {
         cuMemFree(cuda_input_memory);
         cuMemFree(cuda_output_memory);
         chw2hwc<float, uint8_t>(h, w, c, src, dst, alpha); return;
@@ -561,7 +561,7 @@ inline void chw2hwc_cuda(
     uint8_t arg_alpha_val = alpha;
     void* args[] = { &arg_c_val, &arg_h_val, &arg_w_val, &cuda_input_memory, &cuda_output_memory, &arg_alpha_val };
     CUresult cuRes3 = cuLaunchKernel(
-        chw2hwcFun, gridDimX, gridDimY, gridDimZ,
+        chw2hwcCUDAFun, gridDimX, gridDimY, gridDimZ,
         blockDimX, blockDimY, blockDimZ,
         0, nullptr, args, nullptr);
     if (cuRes3 != 0) {
@@ -618,7 +618,7 @@ inline void hwc2chw_cuda(
     float arg_alpha_val = alpha;
     void* args1[] = { &arg_h_val, &arg_w_val, &arg_c_val, &src, &dst, &arg_alpha_val };
     CUresult cuRes0 = cuLaunchKernel(
-        hwc2chwFun, gridDimX, gridDimY, gridDimZ,
+        hwc2chwCUDAFun, gridDimX, gridDimY, gridDimZ,
         blockDimX, blockDimY, blockDimZ,
         0, nullptr, args1, nullptr);
     if (cuRes0 != 0) {
@@ -657,7 +657,7 @@ inline void chw2hwc_cuda(
     uint8_t arg_alpha_val = alpha;
     void* args[] = { &arg_c_val, &arg_h_val, &arg_w_val, &src, &dst, &arg_alpha_val };
     CUresult cuRes0 = cuLaunchKernel(
-        chw2hwcFun, gridDimX, gridDimY, gridDimZ,
+        chw2hwcCUDAFun, gridDimX, gridDimY, gridDimZ,
         blockDimX, blockDimY, blockDimZ,
         0, nullptr, args, nullptr);
     if (cuRes0 != 0) {
