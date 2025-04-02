@@ -334,8 +334,16 @@ static inline bool initROCmDriverAPI()
     auto driverLib = dlManager->loadLibrary(driver_dll);
     if (!driverLib)
     {
-        std::cerr << "Failed to load AMD ROCm Driver API library: " << driver_dll << std::endl;
-        return false;
+#ifdef _WIN32
+        const std::string driver_dll = "amdhip64.dll"; // ROCm v6.x: amdhip64_6.dll, ROCm v5.x: amdhip64.dll
+#else
+        const std::string driver_dll = "amdhip64.so";
+#endif
+        driverLib = dlManager->loadLibrary(driver_dll); //try again
+        if (!driverLib) {
+            std::cerr << "Failed to load AMD ROCm Driver API library: " << driver_dll << std::endl;
+            return false;
+        }
     }
     hipInit = (hipInit_t)(dlManager->getFunction(driver_dll, "hipInit"));
     hipDeviceGet = (hipDeviceGet_t)(dlManager->getFunction(driver_dll, "hipDeviceGet"));

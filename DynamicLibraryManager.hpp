@@ -73,7 +73,8 @@ public:
         if (libraries_.count(libraryName) == 0)
         {
 #ifdef _WIN32
-            LibraryHandle handle = LoadLibraryA(libraryName.c_str());
+            LibraryHandle handle = LoadLibraryEx(libraryName.c_str(), nullptr,
+                LOAD_LIBRARY_SEARCH_DEFAULT_DIRS|LOAD_LIBRARY_SEARCH_SYSTEM32);
 #else
             LibraryHandle handle = dlopen(libraryName.c_str(), RTLD_LAZY);
 #endif
