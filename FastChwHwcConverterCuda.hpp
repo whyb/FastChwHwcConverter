@@ -379,7 +379,7 @@ static inline bool initCudaFunctions(std::string& compiledPtxStr)
     return true;
 }
 
-static inline bool initAll()
+static inline bool initAllCUDA()
 {
     std::lock_guard<std::mutex> lock(CUDAMutex);
     if (initCUDAStatus == InitCUDAStatusEnum::Ready) {
@@ -437,7 +437,7 @@ inline void hwc2chw_cuda(
     const size_t h, const size_t w, const size_t c,
     const uint8_t* src, float* dst,
     const float alpha = 1.f/255.f) {
-    if (!initAll()) {
+    if (!initAllCUDA()) {
         // use cpu
         hwc2chw<uint8_t, float>(h, w, c, src, dst, alpha); return;
     }
@@ -519,7 +519,7 @@ inline void chw2hwc_cuda(
     const size_t c, const size_t h, const size_t w,
     const float* src, uint8_t* dst,
     const uint8_t alpha = 255.0f) {
-    if (!initAll()) {
+    if (!initAllCUDA()) {
         // use cpu
         chw2hwc<float, uint8_t>(c, h, w, src, dst, alpha); return;
     }

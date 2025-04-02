@@ -7,7 +7,7 @@
 #define TEST_COUNT 100
 
 int main() {
-    bool init = whyb::initAll();
+    bool init = whyb::initAllCUDA();
     if (!init) { 
         std::cout << "CUDA init error!" << std::endl;
         return 0; 

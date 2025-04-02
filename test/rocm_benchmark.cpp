@@ -4,10 +4,10 @@
 #include <chrono>
 
 #include "FastChwHwcConverterROCm.hpp"
-#define TEST_COUNT 10
+#define TEST_COUNT 100
 
 int main() {
-    bool init = whyb::initAll();
+    bool init = whyb::initAllROCm();
     if (!init) { 
         std::cout << "ROCm init error!" << std::endl;
         return 0; 
