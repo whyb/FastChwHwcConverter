@@ -91,7 +91,7 @@ typedef hipError_t(*hipModuleUnload_t)(hipModule_t);
 typedef hipError_t(*hipModuleGetFunction_t)(hipFunction_t*, hipModule_t, const char*);
 //typedef hipError_t(*hipLaunchKernel_t)(hipFunction_t, unsigned int, unsigned int, unsigned int, unsigned int, unsigned int, unsigned int, unsigned int, hipCtx_t, void**, void**);
 typedef hipError_t(*hipLaunchKernel_t)(hipFunction_t, dim3, dim3, void**, size_t, hipStream_t);
-//typedef hipError_t(*hipModuleLaunchKernel_t)(hipFunction_t, unsigned int, unsigned int, unsigned int, unsigned int, unsigned int, unsigned int, unsigned int, hipStream_t, void**, void**);
+typedef hipError_t(*hipModuleLaunchKernel_t)(hipFunction_t, unsigned int, unsigned int, unsigned int, unsigned int, unsigned int, unsigned int, unsigned int, hipStream_t, void**, void**);
 typedef hipError_t(*hipCtxSynchronize_t)(void);
 //typedef hipError_t(*hipMemAlloc_t)(hipDeviceptr_t*, size_t);
 typedef hipError_t(*hipMalloc_t)(hipDeviceptr_t*, size_t);
@@ -119,6 +119,7 @@ static hipModuleLoadDataEx_t hipModuleLoadDataEx = nullptr;
 static hipModuleUnload_t hipModuleUnload = nullptr;
 static hipModuleGetFunction_t hipModuleGetFunction = nullptr;
 static hipLaunchKernel_t hipLaunchKernel = nullptr;
+static hipModuleLaunchKernel_t hipModuleLaunchKernel = nullptr;
 static hipCtxSynchronize_t hipCtxSynchronize = nullptr;
 //static hipMemAlloc_t hipMemAlloc = nullptr;
 static hipMalloc_t hipMalloc = nullptr;
@@ -165,6 +166,7 @@ typedef unsigned char uint8_t;
 static hipFunction_t hwc2chwFun = nullptr;
 static hipFunction_t chw2hwcFun = nullptr;
 static hipStream_t stream = nullptr;
+static hipModule_t module = nullptr;
 
 enum struct InitStatusEnum : int
 {
@@ -343,6 +345,7 @@ static inline bool initROCmDriverAPI()
     hipModuleUnload = (hipModuleUnload_t)(dlManager->getFunction(driver_dll, "hipModuleUnload"));
     hipModuleGetFunction = (hipModuleGetFunction_t)(dlManager->getFunction(driver_dll, "hipModuleGetFunction"));
     hipLaunchKernel = (hipLaunchKernel_t)(dlManager->getFunction(driver_dll, "hipLaunchKernel"));
+    hipModuleLaunchKernel = (hipModuleLaunchKernel_t)(dlManager->getFunction(driver_dll, "hipModuleLaunchKernel"));
     hipCtxSynchronize = (hipCtxSynchronize_t)(dlManager->getFunction(driver_dll, "hipCtxSynchronize"));
     //hipMemAlloc = (hipMemAlloc_t)(dlManager->getFunction(driver_dll, "hipMemAlloc"));
     hipMalloc = (hipMalloc_t)(dlManager->getFunction(driver_dll, "hipMalloc")); // == hipMemAlloc
@@ -389,7 +392,6 @@ static inline bool initROCmFunctions(std::string& compiledPtxStr)
     }
 
     // 加载编译好的 PTX 模块到 GPU 内存中
-    hipModule_t module;
     hipRes = hipModuleLoadDataEx(&module, compiledPtxStr.c_str(), 0, nullptr, nullptr);
     if (hipRes != 0) {
         std::cerr << "hipModuleLoadDataEx failed with error " << hipRes << std::endl;
@@ -517,12 +519,12 @@ inline void hwc2chw_rocm(
     size_t arg_w_val = w;
     size_t arg_c_val = c;
     float arg_alpha_val = alpha;
-    void* args1[] = { &arg_h_val, &arg_w_val, &arg_c_val, &rocm_input_memory, &rocm_output_memory, &arg_alpha_val };
-    hipError_t hipRes3 = hipLaunchKernel(
-        hwc2chwFun, 
-        dim3(gridDimX, gridDimY, gridDimZ),
-        dim3(blockDimX, blockDimY, blockDimZ),
-        nullptr, 0, stream);
+    void* args[] = { &arg_h_val, &arg_w_val, &arg_c_val, &rocm_input_memory, &rocm_output_memory, &arg_alpha_val };
+    hipError_t hipRes3 = hipModuleLaunchKernel(
+        hwc2chwFun,
+        gridDimX, gridDimY, gridDimZ,
+        blockDimX, blockDimY, blockDimZ,
+        0, stream, args, nullptr);
     if (hipRes3 != 0) {
         hipFree(rocm_input_memory);
         hipFree(rocm_output_memory);
@@ -602,11 +604,11 @@ inline void chw2hwc_rocm(
     size_t arg_w_val = w;
     uint8_t arg_alpha_val = alpha;
     void* args[] = { &arg_c_val, &arg_h_val, &arg_w_val, &rocm_input_memory, &rocm_output_memory, &arg_alpha_val };
-    hipError_t hipRes3 = hipLaunchKernel(
-        chw2hwcFun,
-        dim3(gridDimX, gridDimY, gridDimZ),
-        dim3(blockDimX, blockDimY, blockDimZ),
-        nullptr, 0, stream);
+    hipError_t hipRes3 = hipModuleLaunchKernel(
+        hwc2chwFun,
+        gridDimX, gridDimY, gridDimZ,
+        blockDimX, blockDimY, blockDimZ,
+        0, stream, args, nullptr);
     if (hipRes3 != 0) {
         hipFree(rocm_input_memory);
         hipFree(rocm_output_memory);
@@ -660,12 +662,12 @@ inline void hwc2chw_rocm(
     size_t arg_w_val = w;
     size_t arg_c_val = c;
     float arg_alpha_val = alpha;
-    void* args1[] = { &arg_h_val, &arg_w_val, &arg_c_val, &src, &dst, &arg_alpha_val };
-    hipError_t hipRes0 = hipLaunchKernel(
+    void* args[] = { &arg_h_val, &arg_w_val, &arg_c_val, &src, &dst, &arg_alpha_val };
+    hipError_t hipRes0 = hipModuleLaunchKernel(
         hwc2chwFun,
-        dim3(gridDimX, gridDimY, gridDimZ),
-        dim3(blockDimX, blockDimY, blockDimZ),
-        nullptr, 0, stream);
+        gridDimX, gridDimY, gridDimZ,
+        blockDimX, blockDimY, blockDimZ,
+        0, stream, args, nullptr);
     if (hipRes0 != 0) {
         return;
     }
@@ -702,11 +704,11 @@ inline void chw2hwc_rocm(
     size_t arg_w_val = w;
     uint8_t arg_alpha_val = alpha;
     void* args[] = { &arg_c_val, &arg_h_val, &arg_w_val, &src, &dst, &arg_alpha_val };
-    hipError_t hipRes0 = hipLaunchKernel(
-        chw2hwcFun,
-        dim3(gridDimX, gridDimY, gridDimZ),
-        dim3(blockDimX, blockDimY, blockDimZ),
-        nullptr, 0, stream);
+    hipError_t hipRes0 = hipModuleLaunchKernel(
+        hwc2chwFun,
+        gridDimX, gridDimY, gridDimZ,
+        blockDimX, blockDimY, blockDimZ,
+        0, stream, args, nullptr);
     if (hipRes0 != 0) {
         return;
     }
