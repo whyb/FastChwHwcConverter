@@ -70,19 +70,17 @@ jobs:
       run: |
         curl -L -o CUDA_v11.8.zip https://github.com/whyb/FastChwHwcConverter/raw/ci-dependencies/CUDA_v11.8/CUDA_v11.8.zip
         curl -L -o ROCm_v6.2.4.zip https://github.com/whyb/FastChwHwcConverter/raw/ci-dependencies/ROCm_v6.2.4/ROCm_v6.2.4.zip
-        mkdir -p ./build-x64/Release/dependencies
-        tar -xf CUDA_v11.8.zip -C ./build-x64/Release/dependencies
-        tar -xf ROCm_v6.2.4.zip -C ./build-x64/Release/dependencies
+        tar -xf CUDA_v11.8.zip -C ./build-x64/Release/
+        tar -xf ROCm_v6.2.4.zip -C ./build-x64/Release/
 
     - name: List build folder
       run: |
         dir .\build-x64\
         dir .\build-x64\Release\
-        dir .\build-x64\Release\dependencies\
 
-    - name: Zip binary files (include dependencies)
+    - name: Zip binary files (flat structure)
       run: |
-        zip ./bin-windows-msvc-x64.zip .\build-x64\Release\example.exe .\build-x64\Release\benchmark.exe  .\build-x64\Release\cuda_benchmark.exe .\build-x64\Release\rocm_benchmark.exe .\build-x64\Release\example-opencv.exe .\build-x64\Release\dependencies\*
+        zip ./bin-windows-msvc-x64.zip .\build-x64\Release\example.exe .\build-x64\Release\benchmark.exe  .\build-x64\Release\cuda_benchmark.exe .\build-x64\Release\rocm_benchmark.exe .\build-x64\Release\example-opencv.exe .\build-x64\Release\*.dll
       
     - name: Archive Windows build artifacts
       uses: actions/upload-artifact@v4
