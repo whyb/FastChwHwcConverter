@@ -35,6 +35,9 @@
 #include <unistd.h>
 #endif
 
+inline int alignSizeUp(int input, int align) {
+    return (input + align - 1) & ~(align - 1);
+}
 
 // HIPRTC enum type define
 typedef enum {
@@ -51,6 +54,15 @@ typedef enum {
     HIPRTC_ERROR_NAME_EXPRESSION_NOT_VALID = 10,
     HIPRTC_ERROR_INTERNAL_ERROR = 11
 } hiprtcResult;
+typedef enum hipMemcpyKind {
+    hipMemcpyHostToHost = 0,            ///< Host-to-Host Copy
+    hipMemcpyHostToDevice = 1,          ///< Host-to-Device Copy
+    hipMemcpyDeviceToHost = 2,          ///< Device-to-Host Copy
+    hipMemcpyDeviceToDevice = 3,        ///< Device-to-Device Copy
+    hipMemcpyDefault = 4,               ///< Runtime will automatically determine
+                                        ///<copy-kind based on virtual addresses.
+    hipMemcpyDeviceToDeviceNoCU = 1024  ///< Device-to-Device Copy without using compute units
+} hipMemcpyKind;
 typedef struct _hiprtcProgram* hiprtcProgram;
 
 // HIPRTC function type define
@@ -77,6 +89,7 @@ typedef struct dim3 {
     uint32_t z;  ///< z
     constexpr dim3(uint32_t _x = 1, uint32_t _y = 1, uint32_t _z = 1) : x(_x), y(_y), z(_z) {};
 } dim3;
+typedef struct ihipEvent_t* hipEvent_t;
 
 // AMD ROCm Driver API function type define
 typedef hipError_t(*hipInit_t)(unsigned int);
@@ -92,15 +105,26 @@ typedef hipError_t(*hipModuleGetFunction_t)(hipFunction_t*, hipModule_t, const c
 typedef hipError_t(*hipLaunchKernel_t)(hipFunction_t, dim3, dim3, void**, size_t, hipStream_t);
 typedef hipError_t(*hipModuleLaunchKernel_t)(hipFunction_t, unsigned int, unsigned int, unsigned int, unsigned int, unsigned int, unsigned int, unsigned int, hipStream_t, void**, void**);
 typedef hipError_t(*hipCtxSynchronize_t)(void);
+
 typedef hipError_t(*hipMalloc_t)(hipDeviceptr_t*, size_t);
 typedef hipError_t(*hipMallocAsync_t)(hipDeviceptr_t*, size_t, hipStream_t);
+typedef hipError_t(*hipHostMalloc_t)(void**, size_t, unsigned int);
 typedef hipError_t(*hipFree_t)(hipDeviceptr_t);
 typedef hipError_t(*hipFreeAsync_t)(hipDeviceptr_t, hipStream_t);
+typedef hipError_t(*hipHostFree_t)(void*);
 
+typedef hipError_t(*hipMemcpy_t)(void*, const void*, size_t, hipMemcpyKind);
+typedef hipError_t(*hipMemcpyAsync_t)(void*, const void*, size_t, hipMemcpyKind, hipStream_t);
 typedef hipError_t(*hipMemcpyHtoD_t)(hipDeviceptr_t, const void*, size_t);
 typedef hipError_t(*hipMemcpyHtoDAsync_t)(hipDeviceptr_t, const void*, size_t, hipStream_t);
 typedef hipError_t(*hipMemcpyDtoH_t)(void*, hipDeviceptr_t, size_t);
 typedef hipError_t(*hipMemcpyDtoHAsync_t)(void*, hipDeviceptr_t, size_t, hipStream_t);
+
+typedef hipError_t(*hipEventCreate_t)(hipEvent_t*);
+typedef hipError_t(*hipEventRecord_t)(hipEvent_t, hipStream_t);
+typedef hipError_t(*hipEventSynchronize_t)(hipEvent_t);
+typedef hipError_t(*hipEventElapsedTime_t)(float*, hipEvent_t, hipEvent_t);
+typedef hipError_t(*hipEventDestroy_t)(hipEvent_t);
 
 #ifdef _WIN32
 #define DYNAMIC_LIBRARY_EXTENSION ".dll"
@@ -124,18 +148,38 @@ static hipModuleLaunchKernel_t hipModuleLaunchKernel = nullptr;
 static hipCtxSynchronize_t hipCtxSynchronize = nullptr;
 static hipMalloc_t hipMalloc = nullptr;
 static hipMallocAsync_t hipMallocAsync = nullptr;
+static hipHostMalloc_t hipHostMalloc = nullptr;
 static hipFree_t hipFree = nullptr;
 static hipFreeAsync_t hipFreeAsync = nullptr;
+static hipHostFree_t hipHostFree = nullptr;
+static hipMemcpy_t hipMemcpy = nullptr;
+static hipMemcpyAsync_t hipMemcpyAsync = nullptr;
 static hipMemcpyHtoD_t hipMemcpyHtoD = nullptr;
 static hipMemcpyHtoDAsync_t hipMemcpyHtoDAsync = nullptr;
 static hipMemcpyDtoH_t hipMemcpyDtoH = nullptr;
 static hipMemcpyDtoHAsync_t hipMemcpyDtoHAsync = nullptr;
+static hipEventCreate_t hipEventCreate = nullptr;
+static hipEventRecord_t hipEventRecord = nullptr;
+static hipEventSynchronize_t hipEventSynchronize = nullptr;
+static hipEventElapsedTime_t hipEventElapsedTime = nullptr;
+static hipEventDestroy_t hipEventDestroy = nullptr;
 
 static const char* rocmSource = R"(
-typedef unsigned char uint8_t;
+  typedef unsigned char uint8_t;
 
-    // HWC -> CHW
-    extern "C" __global__ void rocm_hwc2chw(const size_t h, const size_t w, const size_t c,
+  // HWC -> CHW
+  extern "C" __global__ void rocm_hwc2chw(const size_t h, const size_t w, const size_t c, 
+                                          const uint8_t* src, float* dst, const float alpha = 1.0f) {
+    size_t index = 0UL;
+    const size_t hw_stride = w * h;
+    for (size_t s = 0UL; s < hw_stride; ++s) {
+      size_t stride_index = s;
+      for (size_t i = 0UL; i < c; ++i, stride_index += hw_stride) {
+        dst[stride_index] = static_cast<float>(src[index++] * alpha);
+      }
+    }
+  }
+  extern "C" __global__ void rocm_hwc2chw2(const size_t h, const size_t w, const size_t c,
                                             const uint8_t* src, float* dst, const float alpha = 1.0f) {
         int dx = blockDim.x * blockIdx.x + threadIdx.x;
         int dy = blockDim.y * blockIdx.y + threadIdx.y;
@@ -149,8 +193,19 @@ typedef unsigned char uint8_t;
         }
     }
 
-    // CHW -> HWC
-    extern "C" __global__ void rocm_chw2hwc(const size_t c, const size_t h, const size_t w,
+  // CHW -> HWC
+  extern "C" __global__ void rocm_chw2hwc(const size_t c, const size_t h, const size_t w, 
+                                          const float* src, uint8_t* dst, const uint8_t alpha = 1) {
+    size_t index = 0UL;
+    const size_t hw_stride = w * h;
+    for (size_t s = 0UL; s < hw_stride; ++s) {
+      size_t stride_index = s;
+      for (size_t i = 0UL; i < c; ++i, stride_index += hw_stride) {
+        dst[index++] = static_cast<uint8_t>(src[stride_index] * alpha);
+      }
+    }
+  }
+  extern "C" __global__ void rocm_chw2hwc2(const size_t c, const size_t h, const size_t w,
                                             const float* src, uint8_t* dst, const uint8_t alpha = 1) {
         int dx = blockDim.x * blockIdx.x + threadIdx.x;
         int dy = blockDim.y * blockIdx.y + threadIdx.y;
@@ -361,21 +416,34 @@ static inline bool initROCmDriverAPI()
     //hipMemAlloc = (hipMemAlloc_t)(dlManager->getFunction(driver_dll, "hipMemAlloc"));
     hipMalloc = (hipMalloc_t)(dlManager->getFunction(driver_dll, "hipMalloc")); // == hipMemAlloc
     hipMallocAsync = (hipMallocAsync_t)(dlManager->getFunction(driver_dll, "hipMallocAsync"));
+    hipHostMalloc = (hipHostMalloc_t)(dlManager->getFunction(driver_dll, "hipHostMalloc"));
     //hipMemFree = (hipMemFree_t)(dlManager->getFunction(driver_dll, "hipMemFree"));
     hipFree = (hipFree_t)(dlManager->getFunction(driver_dll, "hipFree")); // == hipMemFree
     hipFreeAsync = (hipFreeAsync_t)(dlManager->getFunction(driver_dll, "hipFreeAsync"));
+    hipHostFree = (hipHostFree_t)(dlManager->getFunction(driver_dll, "hipHostFree"));
+    hipMemcpy = (hipMemcpy_t)(dlManager->getFunction(driver_dll, "hipMemcpy"));
+    hipMemcpyAsync = (hipMemcpyAsync_t)(dlManager->getFunction(driver_dll, "hipMemcpyAsync"));
     hipMemcpyHtoD = (hipMemcpyHtoD_t)(dlManager->getFunction(driver_dll, "hipMemcpyHtoD"));
     hipMemcpyHtoDAsync = (hipMemcpyHtoDAsync_t)(dlManager->getFunction(driver_dll, "hipMemcpyHtoDAsync"));
     hipMemcpyDtoH = (hipMemcpyDtoH_t)(dlManager->getFunction(driver_dll, "hipMemcpyDtoH"));
     hipMemcpyDtoHAsync = (hipMemcpyDtoHAsync_t)(dlManager->getFunction(driver_dll, "hipMemcpyDtoHAsync"));
+    hipEventCreate = (hipEventCreate_t)(dlManager->getFunction(driver_dll, "hipEventCreate"));
+    hipEventRecord = (hipEventRecord_t)(dlManager->getFunction(driver_dll, "hipEventRecord"));
+    hipEventSynchronize = (hipEventSynchronize_t)(dlManager->getFunction(driver_dll, "hipEventSynchronize"));
+    hipEventElapsedTime = (hipEventElapsedTime_t)(dlManager->getFunction(driver_dll, "hipEventElapsedTime"));
+    hipEventDestroy = (hipEventDestroy_t)(dlManager->getFunction(driver_dll, "hipEventDestroy"));
 
     if (!hipInit || !hipDeviceGet || !hipCtxCreate || 
         !hipStreamCreate || !hipStreamDestroy || !hipStreamSynchronize ||
         !hipModuleLoadDataEx ||
         !hipModuleGetFunction || !hipLaunchKernel || !hipCtxSynchronize ||
         !hipMalloc || !hipFree || !hipMallocAsync || !hipFreeAsync ||
+        !hipMemcpy || !hipMemcpyAsync ||
         !hipMemcpyHtoD || !hipMemcpyDtoH ||
-        !hipMemcpyHtoDAsync || !hipMemcpyDtoHAsync) {
+        !hipMemcpyHtoDAsync || !hipMemcpyDtoHAsync ||
+        !hipEventCreate || !hipEventRecord ||
+        !hipEventSynchronize || !hipEventElapsedTime || !hipEventDestroy 
+        ) {
         std::cerr << "Failed to load one or more AMD ROCm Driver API functions." << std::endl;
         return false;
     }
@@ -495,77 +563,139 @@ static inline bool initAllROCm()
 inline void hwc2chw_rocm(
     const size_t h, const size_t w, const size_t c,
     const uint8_t* src, float* dst,
-    const float alpha = 1.f/255.f) {
+    const float alpha = 1.f / 255.f) {
     if (!initAllROCm()) {
-        // use cpu
-        hwc2chw<uint8_t, float>(h, w, c, src, dst, alpha); return;
+        // use CPU fallback
+        hwc2chw<uint8_t, float>(h, w, c, src, dst, alpha);
+        return;
     }
-    // use rocm
+
+    // Initialize sizes
     const size_t pixel_size = h * w * c;
     const size_t input_size = pixel_size * sizeof(uint8_t);
     const size_t output_size = pixel_size * sizeof(float);
-    hipDeviceptr_t rocm_input_memory = 0;
-    hipDeviceptr_t rocm_output_memory = 0;
-    // alloc device memory
-    hipError_t hipRes0 = hipMallocAsync(&rocm_input_memory, input_size, stream);
-    hipError_t hipRes1 = hipMallocAsync(&rocm_output_memory, output_size, stream);
+
+    void* rocm_input_memory = nullptr;
+    void* rocm_output_memory = nullptr;
+
+    // Create hip events
+    hipEvent_t start, stop;
+    hipEventCreate(&start);
+    hipEventCreate(&stop);
+
+    // Allocate host-pinned memory
+    hipEventRecord(start, 0);
+    hipError_t hipRes0 = hipHostMalloc(&rocm_input_memory, input_size, 0);
+    hipError_t hipRes1 = hipHostMalloc(&rocm_output_memory, output_size, 0);
+    hipEventRecord(stop, 0);
+    hipEventSynchronize(stop);
+
+    float mallocTime = 0;
+    hipEventElapsedTime(&mallocTime, start, stop);
+    //std::cout << "hipHostMalloc: " << mallocTime << " ms" << std::endl;
+
     if (hipRes0 != 0 || hipRes1 != 0) {
-        hipFreeAsync(rocm_input_memory, stream);
-        hipFreeAsync(rocm_output_memory, stream);
-        hwc2chw<uint8_t, float>(h, w, c, src, dst, alpha); return;
+        hipHostFree(rocm_input_memory);
+        hipHostFree(rocm_output_memory);
+        hwc2chw<uint8_t, float>(h, w, c, src, dst, alpha);
+        return;
     }
-    // copy host memory to device memory
-    hipError_t hipRes2 = hipMemcpyHtoDAsync(rocm_input_memory, src, input_size, stream);
+
+    // Copy host memory to device memory
+    hipEventRecord(start, 0);
+    hipError_t hipRes2 = hipMemcpyAsync(rocm_input_memory, src, input_size, hipMemcpyKind::hipMemcpyHostToDevice, stream);
+    hipEventRecord(stop, 0);
+    hipEventSynchronize(stop);
+
+    float memcpyHtoDTime = 0;
+    hipEventElapsedTime(&memcpyHtoDTime, start, stop);
+    //std::cout << "hipMemcpyHostToDevice: " << memcpyHtoDTime << " ms" << std::endl;
+
     if (hipRes2 != 0) {
-        hipFreeAsync(rocm_input_memory, stream);
-        hipFreeAsync(rocm_output_memory, stream);
-        hwc2chw<uint8_t, float>(h, w, c, src, dst, alpha); return;
+        hipHostFree(rocm_input_memory);
+        hipHostFree(rocm_output_memory);
+        hwc2chw<uint8_t, float>(h, w, c, src, dst, alpha);
+        return;
     }
-    // call rocm function
-    if (hwc2chwROCmFun == nullptr) {
-        hipFreeAsync(rocm_input_memory, stream);
-        hipFreeAsync(rocm_output_memory, stream);
-        hwc2chw<uint8_t, float>(h, w, c, src, dst, alpha); return;
-    }
+
+    // Kernel execution
     const unsigned int blockDimX = 16, blockDimY = 16, blockDimZ = 1;
     const unsigned int gridDimX = ((unsigned int)w + blockDimX - 1) / blockDimX;
     const unsigned int gridDimY = ((unsigned int)h + blockDimY - 1) / blockDimY;
     const unsigned int gridDimZ = 1;
-    // for ready rocm kernel function(func_hwc2chw)
-    size_t arg_h_val = h;
-    size_t arg_w_val = w;
-    size_t arg_c_val = c;
+
+    size_t arg_h_val = h, arg_w_val = w, arg_c_val = c;
     float arg_alpha_val = alpha;
     void* args[] = { &arg_h_val, &arg_w_val, &arg_c_val, &rocm_input_memory, &rocm_output_memory, &arg_alpha_val };
+
+    hipEventRecord(start, 0);
     hipError_t hipRes3 = hipModuleLaunchKernel(
         hwc2chwROCmFun,
         gridDimX, gridDimY, gridDimZ,
         blockDimX, blockDimY, blockDimZ,
         0, stream, args, nullptr);
-    if (hipRes3 != 0) {
-        hipFreeAsync(rocm_input_memory, stream);
-        hipFreeAsync(rocm_output_memory, stream);
-        hwc2chw<uint8_t, float>(h, w, c, src, dst, alpha); return;
-    }
-    // copy device memory to host memory
-    hipError_t hipRes5 = hipMemcpyDtoHAsync(dst, rocm_output_memory, output_size, stream);
-    if (hipRes5 != 0) {
-        hipFreeAsync(rocm_input_memory, stream);
-        hipFreeAsync(rocm_output_memory, stream);
-        hwc2chw<uint8_t, float>(h, w, c, src, dst, alpha); return;
-    }
-    hipFreeAsync(rocm_input_memory, stream);
-    hipFreeAsync(rocm_output_memory, stream);
+    hipEventRecord(stop, 0);
+    hipEventSynchronize(stop);
 
-    //hipError_t hipRes4 = hipCtxSynchronize();
-    hipError_t hipRes4 = hipStreamSynchronize(stream);
-    if (hipRes4 != 0) {
-        hipFreeAsync(rocm_input_memory, stream);
-        hipFreeAsync(rocm_output_memory, stream);
-        hwc2chw<uint8_t, float>(h, w, c, src, dst, alpha); return;
+    float kernelTime = 0;
+    hipEventElapsedTime(&kernelTime, start, stop);
+    //std::cout << "hipModuleLaunchKernel: " << kernelTime << " ms" << std::endl;
+
+    if (hipRes3 != 0) {
+        hipHostFree(rocm_input_memory);
+        hipHostFree(rocm_output_memory);
+        hwc2chw<uint8_t, float>(h, w, c, src, dst, alpha);
+        return;
     }
-    return;
+
+    // Copy device memory to host memory
+    hipEventRecord(start, 0);
+    hipError_t hipRes5 = hipMemcpyAsync(dst, rocm_output_memory, output_size, hipMemcpyKind::hipMemcpyDeviceToHost, stream);
+    hipEventRecord(stop, 0);
+    hipEventSynchronize(stop);
+
+    float memcpyDtoHTime = 0;
+    hipEventElapsedTime(&memcpyDtoHTime, start, stop);
+    //std::cout << "hipMemcpyDeviceToHost: " << memcpyDtoHTime << " ms" << std::endl;
+
+    if (hipRes5 != 0) {
+        hipHostFree(rocm_input_memory);
+        hipHostFree(rocm_output_memory);
+        hwc2chw<uint8_t, float>(h, w, c, src, dst, alpha);
+        return;
+    }
+
+    // Free memory
+    hipEventRecord(start, 0);
+    hipHostFree(rocm_input_memory);
+    hipHostFree(rocm_output_memory);
+    hipEventRecord(stop, 0);
+    hipEventSynchronize(stop);
+
+    float freeTime = 0;
+    hipEventElapsedTime(&freeTime, start, stop);
+    //std::cout << "hipHostFree: " << freeTime << " ms" << std::endl;
+
+    // Stream synchronization
+    hipEventRecord(start, 0);
+    hipError_t hipRes4 = hipStreamSynchronize(stream);
+    hipEventRecord(stop, 0);
+    hipEventSynchronize(stop);
+
+    float syncTime = 0;
+    hipEventElapsedTime(&syncTime, start, stop);
+    //std::cout << "hipStreamSynchronize: " << syncTime << " ms" << std::endl;
+
+    if (hipRes4 != 0) {
+        hwc2chw<uint8_t, float>(h, w, c, src, dst, alpha);
+        return;
+    }
+
+    // Destroy events
+    hipEventDestroy(start);
+    hipEventDestroy(stop);
 }
+
 
 /**
  * @brief Converts image data from CHW format to HWC format
@@ -587,70 +717,126 @@ inline void chw2hwc_rocm(
     }
     // use rocm
     const size_t pixel_size = h * w * c;
-    const size_t input_size = pixel_size * sizeof(float);
-    const size_t output_size = pixel_size * sizeof(uint8_t);
-    hipDeviceptr_t rocm_input_memory = 0;
-    hipDeviceptr_t rocm_output_memory = 0;
-    // alloc device memory
-    hipError_t hipRes0 = hipMallocAsync(&rocm_input_memory, input_size, stream);
-    hipError_t hipRes1 = hipMallocAsync(&rocm_output_memory, output_size, stream);
+    size_t input_size = pixel_size * sizeof(float);
+    size_t output_size = pixel_size * sizeof(uint8_t);
+    void* rocm_input_memory = nullptr;
+    void* rocm_output_memory = nullptr;
+
+    // Create hip events
+    hipEvent_t start, stop;
+    hipEventCreate(&start);
+    hipEventCreate(&stop);
+
+    // Allocate device memory
+    hipEventRecord(start, 0);
+    hipError_t hipRes0 = hipHostMalloc(&rocm_input_memory, input_size, 0);
+    hipError_t hipRes1 = hipHostMalloc(&rocm_output_memory, output_size, 0);
+    hipEventRecord(stop, 0);
+    hipEventSynchronize(stop);
+
+    float mallocTime = 0;
+    hipEventElapsedTime(&mallocTime, start, stop);
+    //std::cout << "hipHostMalloc: " << mallocTime << "ms" << std::endl;
+
     if (hipRes0 != 0 || hipRes1 != 0) {
-        hipFreeAsync(rocm_input_memory, stream);
-        hipFreeAsync(rocm_output_memory, stream);
+        hipHostFree(rocm_input_memory);
+        hipHostFree(rocm_output_memory);
         chw2hwc<float, uint8_t>(h, w, c, src, dst, alpha); return;
     }
-    // copy host memory to device memory
-    hipError_t hipRes2 = hipMemcpyHtoDAsync(rocm_input_memory, src, input_size, stream);
+
+    // Copy host memory to device memory
+    hipEventRecord(start, 0);
+    hipError_t hipRes2 = hipMemcpyAsync(rocm_input_memory, src, input_size, hipMemcpyKind::hipMemcpyHostToDevice, stream);
+    hipEventRecord(stop, 0);
+    hipEventSynchronize(stop);
+
+    float memcpyHtoDTime = 0;
+    hipEventElapsedTime(&memcpyHtoDTime, start, stop);
+    //std::cout << "hipMemcpyHostToDevice: " << memcpyHtoDTime << "ms" << std::endl;
+
     if (hipRes2 != 0) {
-        hipFreeAsync(rocm_input_memory, stream);
-        hipFreeAsync(rocm_output_memory, stream);
+        hipHostFree(rocm_input_memory);
+        hipHostFree(rocm_output_memory);
         chw2hwc<float, uint8_t>(h, w, c, src, dst, alpha); return;
     }
-    // call rocm function
-    if (chw2hwcROCmFun == nullptr) {
-        hipFreeAsync(rocm_input_memory, stream);
-        hipFreeAsync(rocm_output_memory, stream);
-        chw2hwc<float, uint8_t>(h, w, c, src, dst, alpha); return;
-    }
+
+    // Call kernel
     const unsigned int blockDimX = 16, blockDimY = 16, blockDimZ = 1;
     const unsigned int gridDimX = ((unsigned int)w + blockDimX - 1) / blockDimX;
     const unsigned int gridDimY = ((unsigned int)h + blockDimY - 1) / blockDimY;
     const unsigned int gridDimZ = 1;
-    // for ready rocm kernel function(func_hwc2chw)
+
     size_t arg_c_val = c;
     size_t arg_h_val = h;
     size_t arg_w_val = w;
     uint8_t arg_alpha_val = alpha;
     void* args[] = { &arg_c_val, &arg_h_val, &arg_w_val, &rocm_input_memory, &rocm_output_memory, &arg_alpha_val };
+
+    hipEventRecord(start, 0);
     hipError_t hipRes3 = hipModuleLaunchKernel(
         hwc2chwROCmFun,
         gridDimX, gridDimY, gridDimZ,
         blockDimX, blockDimY, blockDimZ,
         0, stream, args, nullptr);
-    if (hipRes3 != 0) {
-        hipFreeAsync(rocm_input_memory, stream);
-        hipFreeAsync(rocm_output_memory, stream);
-        chw2hwc<float, uint8_t>(h, w, c, src, dst, alpha); return;
-    }
-    // copy device memory to host memory
-    hipError_t hipRes5 = hipMemcpyDtoHAsync(dst, rocm_output_memory, output_size, stream);
-    if (hipRes5 != 0) {
-        hipFreeAsync(rocm_input_memory, stream);
-        hipFreeAsync(rocm_output_memory, stream);
-        chw2hwc<float, uint8_t>(h, w, c, src, dst, alpha); return;
-    }
-    hipError_t hipRes6 = hipFreeAsync(rocm_input_memory, stream);
-    hipError_t hipRes7 = hipFreeAsync(rocm_output_memory, stream);
+    hipEventRecord(stop, 0);
+    hipEventSynchronize(stop);
 
-    //hipError_t hipRes4 = hipCtxSynchronize();
-    hipError_t hipRes4 = hipStreamSynchronize(stream);
-    if (hipRes4 != 0) {
-        hipFreeAsync(rocm_input_memory, stream);
-        hipFreeAsync(rocm_output_memory, stream);
+    float kernelLaunchTime = 0;
+    hipEventElapsedTime(&kernelLaunchTime, start, stop);
+    //std::cout << "hipModuleLaunchKernel: " << kernelLaunchTime << "ms" << std::endl;
+
+    if (hipRes3 != 0) {
+        hipHostFree(rocm_input_memory);
+        hipHostFree(rocm_output_memory);
         chw2hwc<float, uint8_t>(h, w, c, src, dst, alpha); return;
     }
-    return;
+
+    // Copy device memory to host memory
+    hipEventRecord(start, 0);
+    hipError_t hipRes5 = hipMemcpyAsync(dst, rocm_output_memory, output_size, hipMemcpyKind::hipMemcpyDeviceToHost, stream);
+    hipEventRecord(stop, 0);
+    hipEventSynchronize(stop);
+
+    float memcpyDtoHTime = 0;
+    hipEventElapsedTime(&memcpyDtoHTime, start, stop);
+    //std::cout << "hipMemcpyDeviceToHost: " << memcpyDtoHTime << "ms" << std::endl;
+
+    if (hipRes5 != 0) {
+        hipHostFree(rocm_input_memory);
+        hipHostFree(rocm_output_memory);
+        chw2hwc<float, uint8_t>(h, w, c, src, dst, alpha); return;
+    }
+
+    // Free memory
+    hipEventRecord(start, 0);
+    hipHostFree(rocm_input_memory);
+    hipHostFree(rocm_output_memory);
+    hipEventRecord(stop, 0);
+    hipEventSynchronize(stop);
+
+    float freeTime = 0;
+    hipEventElapsedTime(&freeTime, start, stop);
+    //std::cout << "hipHostFree: " << freeTime << "ms" << std::endl;
+
+    // Synchronize the stream
+    hipEventRecord(start, 0);
+    hipError_t hipRes4 = hipStreamSynchronize(stream);
+    hipEventRecord(stop, 0);
+    hipEventSynchronize(stop);
+
+    float syncTime = 0;
+    hipEventElapsedTime(&syncTime, start, stop);
+    //std::cout << "hipStreamSynchronize: " << syncTime << "ms" << std::endl;
+
+    if (hipRes4 != 0) {
+        chw2hwc<float, uint8_t>(h, w, c, src, dst, alpha); return;
+    }
+
+    // Destroy events
+    hipEventDestroy(start);
+    hipEventDestroy(stop);
 }
+
 
 
 /**
@@ -665,7 +851,7 @@ inline void chw2hwc_rocm(
  */
 inline void hwc2chw_rocm(
     const size_t h, const size_t w, const size_t c,
-    hipDeviceptr_t src, hipDeviceptr_t dst,
+    void* src, void* dst,
     const float alpha = 1.f / 255.f) {
 
     const size_t pixel_size = h * w * c;
@@ -710,7 +896,7 @@ inline void hwc2chw_rocm(
  */
 inline void chw2hwc_rocm(
     const size_t c, const size_t h, const size_t w,
-    hipDeviceptr_t src, hipDeviceptr_t dst,
+    void* src, void* dst,
     const uint8_t alpha = 255.0f) {
     
     const unsigned int blockDimX = 16, blockDimY = 16, blockDimZ = 1;
