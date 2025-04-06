@@ -15,6 +15,7 @@ jobs:
 
     - name: Install dependencies
       run: |
+        sudo apt-get update -y
         sudo apt-get install -y cmake
         sudo apt-get install -y libomp-dev
         sudo apt-get install -y libopencv-dev
