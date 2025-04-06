@@ -56,7 +56,7 @@ int main() {
             for (size_t i = 0; i < TEST_COUNT; ++i) {
 
                 // 1. host memory
-                //whyb::hwc2chw_rocm(height, width, channel, (uint8_t*)src_uint8.data(), (float*)src_float.data(), 1.f/255.f);
+                //whyb::hwc2chw_rocm(height, width, channel, (uint8_t*)src_uint8.data(), (float*)src_float.data(), 1.f / 255.f);
 
                 // 2. device memory
                 whyb::hwc2chw_rocm(height, width, channel, src_uint8, src_float, 1.f / 255.f);

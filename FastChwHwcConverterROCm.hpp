@@ -168,56 +168,33 @@ static const char* rocmSource = R"(
   typedef unsigned char uint8_t;
 
   // HWC -> CHW
-  extern "C" __global__ void rocm_hwc2chw(const size_t h, const size_t w, const size_t c, 
-                                          const uint8_t* src, float* dst, const float alpha = 1.0f) {
-    size_t index = 0UL;
-    const size_t hw_stride = w * h;
-    for (size_t s = 0UL; s < hw_stride; ++s) {
-      size_t stride_index = s;
-      for (size_t i = 0UL; i < c; ++i, stride_index += hw_stride) {
-        dst[stride_index] = static_cast<float>(src[index++] * alpha);
+  extern "C" __global__ void rocm_hwc2chw(const size_t h, const size_t w, const size_t c,
+                                          const uint8_t* __restrict__ src, float* __restrict__ dst, const float alpha = 1.0f) {
+      int dx = blockIdx.x * blockDim.x + threadIdx.x;
+      int dy = blockIdx.y * blockDim.y + threadIdx.y;
+      int dz = blockIdx.z * blockDim.z + threadIdx.z;
+  
+      if (dx < w && dy < h && dz < c) {
+          size_t src_idx = dy * w * c + dx * c + dz;
+          size_t dst_idx = dz * w * h + dy * w + dx;
+          dst[dst_idx] = static_cast<float>(src[src_idx] * alpha);
       }
-    }
   }
-  extern "C" __global__ void rocm_hwc2chw2(const size_t h, const size_t w, const size_t c,
-                                            const uint8_t* src, float* dst, const float alpha = 1.0f) {
-        int dx = blockDim.x * blockIdx.x + threadIdx.x;
-        int dy = blockDim.y * blockIdx.y + threadIdx.y;
 
-        if (dx < w && dy < h) {
-            for (size_t channel = 0; channel < c; ++channel) {
-                size_t src_idx = dy * w * c + dx * c + channel;
-                size_t dst_idx = channel * w * h + dy * w + dx;
-                dst[dst_idx] = src[src_idx] * alpha;
-            }
-        }
-    }
+   // CHW -> HWC
+   extern "C" __global__ void rocm_chw2hwc(const size_t c, const size_t h, const size_t w,
+                                           const float* __restrict__ src, uint8_t* __restrict__ dst, const uint8_t alpha = 1) {
+       int dx = blockIdx.x * blockDim.x + threadIdx.x;
+       int dy = blockIdx.y * blockDim.y + threadIdx.y;
+       int dz = blockIdx.z * blockDim.z + threadIdx.z;
+   
+       if (dx < w && dy < h && dz < c) {
+           size_t src_idx = dz * w * h + dy * w + dx;
+           size_t dst_idx = dy * w * c + dx * c + dz;
+           dst[dst_idx] = static_cast<uint8_t>(src[src_idx] * alpha);
+       }
+   }
 
-  // CHW -> HWC
-  extern "C" __global__ void rocm_chw2hwc(const size_t c, const size_t h, const size_t w, 
-                                          const float* src, uint8_t* dst, const uint8_t alpha = 1) {
-    size_t index = 0UL;
-    const size_t hw_stride = w * h;
-    for (size_t s = 0UL; s < hw_stride; ++s) {
-      size_t stride_index = s;
-      for (size_t i = 0UL; i < c; ++i, stride_index += hw_stride) {
-        dst[index++] = static_cast<uint8_t>(src[stride_index] * alpha);
-      }
-    }
-  }
-  extern "C" __global__ void rocm_chw2hwc2(const size_t c, const size_t h, const size_t w,
-                                            const float* src, uint8_t* dst, const uint8_t alpha = 1) {
-        int dx = blockDim.x * blockIdx.x + threadIdx.x;
-        int dy = blockDim.y * blockIdx.y + threadIdx.y;
-
-        if (dx < w && dy < h) {
-            for (size_t channel = 0; channel < c; ++channel) {
-                size_t src_idx = channel * w * h + dy * w + dx;
-                size_t dst_idx = dy * w * c + dx * c + channel;
-                dst[dst_idx] = static_cast<uint8_t>(src[src_idx] * alpha);
-            }
-        }
-    }
 
 )";
 
@@ -548,6 +525,7 @@ static inline bool initAllROCm()
         std::cerr << "Init Failed. Last error: " << lastROCmErrorStr << std::endl;
         return false;
     }
+    return true;
 }
 
 /**
@@ -578,21 +556,9 @@ inline void hwc2chw_rocm(
     void* rocm_input_memory = nullptr;
     void* rocm_output_memory = nullptr;
 
-    // Create hip events
-    hipEvent_t start, stop;
-    hipEventCreate(&start);
-    hipEventCreate(&stop);
-
     // Allocate host-pinned memory
-    hipEventRecord(start, 0);
     hipError_t hipRes0 = hipHostMalloc(&rocm_input_memory, input_size, 0);
     hipError_t hipRes1 = hipHostMalloc(&rocm_output_memory, output_size, 0);
-    hipEventRecord(stop, 0);
-    hipEventSynchronize(stop);
-
-    float mallocTime = 0;
-    hipEventElapsedTime(&mallocTime, start, stop);
-    //std::cout << "hipHostMalloc: " << mallocTime << " ms" << std::endl;
 
     if (hipRes0 != 0 || hipRes1 != 0) {
         hipHostFree(rocm_input_memory);
@@ -602,14 +568,7 @@ inline void hwc2chw_rocm(
     }
 
     // Copy host memory to device memory
-    hipEventRecord(start, 0);
     hipError_t hipRes2 = hipMemcpyAsync(rocm_input_memory, src, input_size, hipMemcpyKind::hipMemcpyHostToDevice, stream);
-    hipEventRecord(stop, 0);
-    hipEventSynchronize(stop);
-
-    float memcpyHtoDTime = 0;
-    hipEventElapsedTime(&memcpyHtoDTime, start, stop);
-    //std::cout << "hipMemcpyHostToDevice: " << memcpyHtoDTime << " ms" << std::endl;
 
     if (hipRes2 != 0) {
         hipHostFree(rocm_input_memory);
@@ -619,7 +578,7 @@ inline void hwc2chw_rocm(
     }
 
     // Kernel execution
-    const unsigned int blockDimX = 16, blockDimY = 16, blockDimZ = 1;
+    const unsigned int blockDimX = 32, blockDimY = 32, blockDimZ = 1;
     const unsigned int gridDimX = ((unsigned int)w + blockDimX - 1) / blockDimX;
     const unsigned int gridDimY = ((unsigned int)h + blockDimY - 1) / blockDimY;
     const unsigned int gridDimZ = 1;
@@ -628,18 +587,11 @@ inline void hwc2chw_rocm(
     float arg_alpha_val = alpha;
     void* args[] = { &arg_h_val, &arg_w_val, &arg_c_val, &rocm_input_memory, &rocm_output_memory, &arg_alpha_val };
 
-    hipEventRecord(start, 0);
     hipError_t hipRes3 = hipModuleLaunchKernel(
         hwc2chwROCmFun,
         gridDimX, gridDimY, gridDimZ,
         blockDimX, blockDimY, blockDimZ,
         0, stream, args, nullptr);
-    hipEventRecord(stop, 0);
-    hipEventSynchronize(stop);
-
-    float kernelTime = 0;
-    hipEventElapsedTime(&kernelTime, start, stop);
-    //std::cout << "hipModuleLaunchKernel: " << kernelTime << " ms" << std::endl;
 
     if (hipRes3 != 0) {
         hipHostFree(rocm_input_memory);
@@ -649,14 +601,7 @@ inline void hwc2chw_rocm(
     }
 
     // Copy device memory to host memory
-    hipEventRecord(start, 0);
     hipError_t hipRes5 = hipMemcpyAsync(dst, rocm_output_memory, output_size, hipMemcpyKind::hipMemcpyDeviceToHost, stream);
-    hipEventRecord(stop, 0);
-    hipEventSynchronize(stop);
-
-    float memcpyDtoHTime = 0;
-    hipEventElapsedTime(&memcpyDtoHTime, start, stop);
-    //std::cout << "hipMemcpyDeviceToHost: " << memcpyDtoHTime << " ms" << std::endl;
 
     if (hipRes5 != 0) {
         hipHostFree(rocm_input_memory);
@@ -666,34 +611,16 @@ inline void hwc2chw_rocm(
     }
 
     // Free memory
-    hipEventRecord(start, 0);
     hipHostFree(rocm_input_memory);
     hipHostFree(rocm_output_memory);
-    hipEventRecord(stop, 0);
-    hipEventSynchronize(stop);
-
-    float freeTime = 0;
-    hipEventElapsedTime(&freeTime, start, stop);
-    //std::cout << "hipHostFree: " << freeTime << " ms" << std::endl;
 
     // Stream synchronization
-    hipEventRecord(start, 0);
     hipError_t hipRes4 = hipStreamSynchronize(stream);
-    hipEventRecord(stop, 0);
-    hipEventSynchronize(stop);
-
-    float syncTime = 0;
-    hipEventElapsedTime(&syncTime, start, stop);
-    //std::cout << "hipStreamSynchronize: " << syncTime << " ms" << std::endl;
 
     if (hipRes4 != 0) {
         hwc2chw<uint8_t, float>(h, w, c, src, dst, alpha);
         return;
     }
-
-    // Destroy events
-    hipEventDestroy(start);
-    hipEventDestroy(stop);
 }
 
 
@@ -722,21 +649,9 @@ inline void chw2hwc_rocm(
     void* rocm_input_memory = nullptr;
     void* rocm_output_memory = nullptr;
 
-    // Create hip events
-    hipEvent_t start, stop;
-    hipEventCreate(&start);
-    hipEventCreate(&stop);
-
     // Allocate device memory
-    hipEventRecord(start, 0);
     hipError_t hipRes0 = hipHostMalloc(&rocm_input_memory, input_size, 0);
     hipError_t hipRes1 = hipHostMalloc(&rocm_output_memory, output_size, 0);
-    hipEventRecord(stop, 0);
-    hipEventSynchronize(stop);
-
-    float mallocTime = 0;
-    hipEventElapsedTime(&mallocTime, start, stop);
-    //std::cout << "hipHostMalloc: " << mallocTime << "ms" << std::endl;
 
     if (hipRes0 != 0 || hipRes1 != 0) {
         hipHostFree(rocm_input_memory);
@@ -745,14 +660,7 @@ inline void chw2hwc_rocm(
     }
 
     // Copy host memory to device memory
-    hipEventRecord(start, 0);
     hipError_t hipRes2 = hipMemcpyAsync(rocm_input_memory, src, input_size, hipMemcpyKind::hipMemcpyHostToDevice, stream);
-    hipEventRecord(stop, 0);
-    hipEventSynchronize(stop);
-
-    float memcpyHtoDTime = 0;
-    hipEventElapsedTime(&memcpyHtoDTime, start, stop);
-    //std::cout << "hipMemcpyHostToDevice: " << memcpyHtoDTime << "ms" << std::endl;
 
     if (hipRes2 != 0) {
         hipHostFree(rocm_input_memory);
@@ -761,7 +669,7 @@ inline void chw2hwc_rocm(
     }
 
     // Call kernel
-    const unsigned int blockDimX = 16, blockDimY = 16, blockDimZ = 1;
+    const unsigned int blockDimX = 32, blockDimY = 32, blockDimZ = 1;
     const unsigned int gridDimX = ((unsigned int)w + blockDimX - 1) / blockDimX;
     const unsigned int gridDimY = ((unsigned int)h + blockDimY - 1) / blockDimY;
     const unsigned int gridDimZ = 1;
@@ -772,18 +680,11 @@ inline void chw2hwc_rocm(
     uint8_t arg_alpha_val = alpha;
     void* args[] = { &arg_c_val, &arg_h_val, &arg_w_val, &rocm_input_memory, &rocm_output_memory, &arg_alpha_val };
 
-    hipEventRecord(start, 0);
     hipError_t hipRes3 = hipModuleLaunchKernel(
         hwc2chwROCmFun,
         gridDimX, gridDimY, gridDimZ,
         blockDimX, blockDimY, blockDimZ,
         0, stream, args, nullptr);
-    hipEventRecord(stop, 0);
-    hipEventSynchronize(stop);
-
-    float kernelLaunchTime = 0;
-    hipEventElapsedTime(&kernelLaunchTime, start, stop);
-    //std::cout << "hipModuleLaunchKernel: " << kernelLaunchTime << "ms" << std::endl;
 
     if (hipRes3 != 0) {
         hipHostFree(rocm_input_memory);
@@ -792,14 +693,7 @@ inline void chw2hwc_rocm(
     }
 
     // Copy device memory to host memory
-    hipEventRecord(start, 0);
     hipError_t hipRes5 = hipMemcpyAsync(dst, rocm_output_memory, output_size, hipMemcpyKind::hipMemcpyDeviceToHost, stream);
-    hipEventRecord(stop, 0);
-    hipEventSynchronize(stop);
-
-    float memcpyDtoHTime = 0;
-    hipEventElapsedTime(&memcpyDtoHTime, start, stop);
-    //std::cout << "hipMemcpyDeviceToHost: " << memcpyDtoHTime << "ms" << std::endl;
 
     if (hipRes5 != 0) {
         hipHostFree(rocm_input_memory);
@@ -808,33 +702,14 @@ inline void chw2hwc_rocm(
     }
 
     // Free memory
-    hipEventRecord(start, 0);
     hipHostFree(rocm_input_memory);
     hipHostFree(rocm_output_memory);
-    hipEventRecord(stop, 0);
-    hipEventSynchronize(stop);
 
-    float freeTime = 0;
-    hipEventElapsedTime(&freeTime, start, stop);
-    //std::cout << "hipHostFree: " << freeTime << "ms" << std::endl;
-
-    // Synchronize the stream
-    hipEventRecord(start, 0);
     hipError_t hipRes4 = hipStreamSynchronize(stream);
-    hipEventRecord(stop, 0);
-    hipEventSynchronize(stop);
-
-    float syncTime = 0;
-    hipEventElapsedTime(&syncTime, start, stop);
-    //std::cout << "hipStreamSynchronize: " << syncTime << "ms" << std::endl;
 
     if (hipRes4 != 0) {
         chw2hwc<float, uint8_t>(h, w, c, src, dst, alpha); return;
     }
-
-    // Destroy events
-    hipEventDestroy(start);
-    hipEventDestroy(stop);
 }
 
 
@@ -858,7 +733,7 @@ inline void hwc2chw_rocm(
     const size_t input_size = pixel_size * sizeof(uint8_t);
     const size_t output_size = pixel_size * sizeof(float);
 
-    const unsigned int blockDimX = 16, blockDimY = 16, blockDimZ = 1;
+    const unsigned int blockDimX = 32, blockDimY = 32, blockDimZ = 1;
     const unsigned int gridDimX = ((unsigned int)w + blockDimX - 1) / blockDimX;
     const unsigned int gridDimY = ((unsigned int)h + blockDimY - 1) / blockDimY;
     const unsigned int gridDimZ = 1;
@@ -876,7 +751,6 @@ inline void hwc2chw_rocm(
     if (hipRes0 != 0) {
         return;
     }
-    //hipError_t hipRes1 = hipCtxSynchronize();
     hipError_t hipRes1 = hipStreamSynchronize(stream);
     if (hipRes1 != 0) {
         return;
@@ -899,7 +773,7 @@ inline void chw2hwc_rocm(
     void* src, void* dst,
     const uint8_t alpha = 255.0f) {
     
-    const unsigned int blockDimX = 16, blockDimY = 16, blockDimZ = 1;
+    const unsigned int blockDimX = 32, blockDimY = 32, blockDimZ = 1;
     const unsigned int gridDimX = ((unsigned int)w + blockDimX - 1) / blockDimX;
     const unsigned int gridDimY = ((unsigned int)h + blockDimY - 1) / blockDimY;
     const unsigned int gridDimZ = 1;
@@ -917,7 +791,6 @@ inline void chw2hwc_rocm(
     if (hipRes0 != 0) {
         return;
     }
-    //hipError_t hipRes1 = hipCtxSynchronize();
     hipError_t hipRes1 = hipStreamSynchronize(stream);
     if (hipRes1 != 0) {
         return;
