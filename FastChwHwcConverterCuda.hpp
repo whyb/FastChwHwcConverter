@@ -108,37 +108,35 @@ static cuMemcpyHtoD_t cuMemcpyHtoD = nullptr;
 static cuMemcpyDtoH_t cuMemcpyDtoH = nullptr;
 
 static const char* cudaSource = R"(
-typedef unsigned char uint8_t;
+  typedef unsigned char uint8_t;
 
-    // HWC -> CHW
-    extern "C" __global__ void cuda_hwc2chw(const size_t h, const size_t w, const size_t c,
-                                            const uint8_t* src, float* dst, const float alpha = 1.0f) {
-        int dx = blockDim.x * blockIdx.x + threadIdx.x;
-        int dy = blockDim.y * blockIdx.y + threadIdx.y;
+  // HWC -> CHW
+  extern "C" __global__ void cuda_hwc2chw(const size_t h, const size_t w, const size_t c,
+                                          const uint8_t* __restrict__ src, float* __restrict__ dst, const float alpha = 1.0f) {
+      int dx = blockIdx.x * blockDim.x + threadIdx.x;
+      int dy = blockIdx.y * blockDim.y + threadIdx.y;
+      int dz = blockIdx.z * blockDim.z + threadIdx.z;
+  
+      if (dx < w && dy < h && dz < c) {
+          size_t src_idx = dy * w * c + dx * c + dz;
+          size_t dst_idx = dz * w * h + dy * w + dx;
+          dst[dst_idx] = static_cast<float>(src[src_idx] * alpha);
+      }
+  }
 
-        if (dx < w && dy < h) {
-            for (size_t channel = 0; channel < c; ++channel) {
-                size_t src_idx = dy * w * c + dx * c + channel;
-                size_t dst_idx = channel * w * h + dy * w + dx;
-                dst[dst_idx] = src[src_idx] * alpha;
-            }
-        }
-    }
-
-    // CHW -> HWC
-    extern "C" __global__ void cuda_chw2hwc(const size_t c, const size_t h, const size_t w,
-                                            const float* src, uint8_t* dst, const uint8_t alpha = 1) {
-        int dx = blockDim.x * blockIdx.x + threadIdx.x;
-        int dy = blockDim.y * blockIdx.y + threadIdx.y;
-
-        if (dx < w && dy < h) {
-            for (size_t channel = 0; channel < c; ++channel) {
-                size_t src_idx = channel * w * h + dy * w + dx;
-                size_t dst_idx = dy * w * c + dx * c + channel;
-                dst[dst_idx] = static_cast<uint8_t>(src[src_idx] * alpha);
-            }
-        }
-    }
+   // CHW -> HWC
+   extern "C" __global__ void cuda_chw2hwc(const size_t c, const size_t h, const size_t w,
+                                           const float* __restrict__ src, uint8_t* __restrict__ dst, const uint8_t alpha = 1) {
+       int dx = blockIdx.x * blockDim.x + threadIdx.x;
+       int dy = blockIdx.y * blockDim.y + threadIdx.y;
+       int dz = blockIdx.z * blockDim.z + threadIdx.z;
+   
+       if (dx < w && dy < h && dz < c) {
+           size_t src_idx = dz * w * h + dy * w + dx;
+           size_t dst_idx = dy * w * c + dx * c + dz;
+           dst[dst_idx] = static_cast<uint8_t>(src[src_idx] * alpha);
+       }
+   }
 
 )";
 
@@ -468,7 +466,7 @@ inline void hwc2chw_cuda(
         cuMemFree(cuda_output_memory);
         hwc2chw<uint8_t, float>(h, w, c, src, dst, alpha); return;
     }
-    const unsigned int blockDimX = 16, blockDimY = 16, blockDimZ = 1;
+    const unsigned int blockDimX = 32, blockDimY = 32, blockDimZ = 1;
     const unsigned int gridDimX = ((unsigned int)w + blockDimX - 1) / blockDimX;
     const unsigned int gridDimY = ((unsigned int)h + blockDimY - 1) / blockDimY;
     const unsigned int gridDimZ = 1;
@@ -550,7 +548,7 @@ inline void chw2hwc_cuda(
         cuMemFree(cuda_output_memory);
         chw2hwc<float, uint8_t>(h, w, c, src, dst, alpha); return;
     }
-    const unsigned int blockDimX = 16, blockDimY = 16, blockDimZ = 1;
+    const unsigned int blockDimX = 32, blockDimY = 32, blockDimZ = 1;
     const unsigned int gridDimX = ((unsigned int)w + blockDimX - 1) / blockDimX;
     const unsigned int gridDimY = ((unsigned int)h + blockDimY - 1) / blockDimY;
     const unsigned int gridDimZ = 1;
@@ -607,7 +605,7 @@ inline void hwc2chw_cuda(
     const size_t input_size = pixel_size * sizeof(uint8_t);
     const size_t output_size = pixel_size * sizeof(float);
 
-    const unsigned int blockDimX = 16, blockDimY = 16, blockDimZ = 1;
+    const unsigned int blockDimX = 32, blockDimY = 32, blockDimZ = 1;
     const unsigned int gridDimX = ((unsigned int)w + blockDimX - 1) / blockDimX;
     const unsigned int gridDimY = ((unsigned int)h + blockDimY - 1) / blockDimY;
     const unsigned int gridDimZ = 1;
@@ -646,7 +644,7 @@ inline void chw2hwc_cuda(
     CUdeviceptr src, CUdeviceptr dst,
     const uint8_t alpha = 255.0f) {
     
-    const unsigned int blockDimX = 16, blockDimY = 16, blockDimZ = 1;
+    const unsigned int blockDimX = 32, blockDimY = 32, blockDimZ = 1;
     const unsigned int gridDimX = ((unsigned int)w + blockDimX - 1) / blockDimX;
     const unsigned int gridDimY = ((unsigned int)h + blockDimY - 1) / blockDimY;
     const unsigned int gridDimZ = 1;
