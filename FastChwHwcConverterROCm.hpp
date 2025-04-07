@@ -200,8 +200,8 @@ static const char* rocmSource = R"(
 
 static hipFunction_t hwc2chwROCmFun = nullptr;
 static hipFunction_t chw2hwcROCmFun = nullptr;
-static hipStream_t stream = nullptr;
-static hipModule_t module = nullptr;
+static hipStream_t rocmstream = nullptr;
+static hipModule_t rocmmodule = nullptr;
 
 enum struct InitROCmStatusEnum : int
 {
@@ -440,44 +440,43 @@ static inline bool initROCmFunctions(std::string& compiledPtxStr)
         std::cerr << "hipDeviceGet failed with error " << hipRes << std::endl;
         return false;
     }
-    //hipCtx_t context;
-    //hipRes = hipCtxCreate(&context, 0, device);
-    //if (hipRes != 0) {
-    //    std::cerr << "hipCtxCreate failed with error " << hipRes << std::endl;
-    //    return false;
-    //}
-    //hipStream_t stream;
-    hipRes = hipStreamCreate(&stream);
+    hipCtx_t context;
+    hipRes = hipCtxCreate(&context, 0, device);
+    if (hipRes != 0) {
+        std::cerr << "hipCtxCreate failed with error " << hipRes << std::endl;
+        return false;
+    }
+    hipRes = hipStreamCreate(&rocmstream);
     if (hipRes != 0) {
         std::cerr << "hipStreamCreate failed with error " << hipRes << std::endl;
         return false;
     }
 
     // 加载编译好的 PTX 模块到 GPU 内存中
-    hipRes = hipModuleLoadDataEx(&module, compiledPtxStr.c_str(), 0, nullptr, nullptr);
+    hipRes = hipModuleLoadDataEx(&rocmmodule, compiledPtxStr.c_str(), 0, nullptr, nullptr);
     if (hipRes != 0) {
         std::cerr << "hipModuleLoadDataEx failed with error " << hipRes << std::endl;
-        //hipCtxDestroy(context);
-        hipStreamDestroy(stream);
+        hipCtxDestroy(context);
+        hipStreamDestroy(rocmstream);
         return false;
     }
 
     // Get ROCm module kernel function(rocm_hwc2chw)
-    hipRes = hipModuleGetFunction(&hwc2chwROCmFun, module, "rocm_hwc2chw");
+    hipRes = hipModuleGetFunction(&hwc2chwROCmFun, rocmmodule, "rocm_hwc2chw");
     if (hipRes != 0) {
         std::cerr << "hipModuleGetFunction (rocm_hwc2chw) failed with error " << hipRes << std::endl;
-        hipModuleUnload(module);
-        //hipCtxDestroy(context);
-        hipStreamDestroy(stream);
+        hipModuleUnload(rocmmodule);
+        hipCtxDestroy(context);
+        hipStreamDestroy(rocmstream);
         return false;
     }
     // Get ROCm module kernel function(rocm_chw2hwc)
-    hipRes = hipModuleGetFunction(&chw2hwcROCmFun, module, "rocm_chw2hwc");
+    hipRes = hipModuleGetFunction(&chw2hwcROCmFun, rocmmodule, "rocm_chw2hwc");
     if (hipRes != 0) {
         std::cerr << "hipModuleGetFunction (rocm_chw2hwc) failed with error " << hipRes << std::endl;
-        hipModuleUnload(module);
-        //hipCtxDestroy(context);
-        hipStreamDestroy(stream);
+        hipModuleUnload(rocmmodule);
+        hipCtxDestroy(context);
+        hipStreamDestroy(rocmstream);
         return false;
     }
     return true;
@@ -568,7 +567,7 @@ inline void hwc2chw_rocm(
     }
 
     // Copy host memory to device memory
-    hipError_t hipRes2 = hipMemcpyAsync(rocm_input_memory, src, input_size, hipMemcpyKind::hipMemcpyHostToDevice, stream);
+    hipError_t hipRes2 = hipMemcpyAsync(rocm_input_memory, src, input_size, hipMemcpyKind::hipMemcpyHostToDevice, rocmstream);
 
     if (hipRes2 != 0) {
         hipHostFree(rocm_input_memory);
@@ -591,7 +590,7 @@ inline void hwc2chw_rocm(
         hwc2chwROCmFun,
         gridDimX, gridDimY, gridDimZ,
         blockDimX, blockDimY, blockDimZ,
-        0, stream, args, nullptr);
+        0, rocmstream, args, nullptr);
 
     if (hipRes3 != 0) {
         hipHostFree(rocm_input_memory);
@@ -601,7 +600,7 @@ inline void hwc2chw_rocm(
     }
 
     // Copy device memory to host memory
-    hipError_t hipRes5 = hipMemcpyAsync(dst, rocm_output_memory, output_size, hipMemcpyKind::hipMemcpyDeviceToHost, stream);
+    hipError_t hipRes5 = hipMemcpyAsync(dst, rocm_output_memory, output_size, hipMemcpyKind::hipMemcpyDeviceToHost, rocmstream);
 
     if (hipRes5 != 0) {
         hipHostFree(rocm_input_memory);
@@ -615,7 +614,7 @@ inline void hwc2chw_rocm(
     hipHostFree(rocm_output_memory);
 
     // Stream synchronization
-    hipError_t hipRes4 = hipStreamSynchronize(stream);
+    hipError_t hipRes4 = hipStreamSynchronize(rocmstream);
 
     if (hipRes4 != 0) {
         hwc2chw<uint8_t, float>(h, w, c, src, dst, alpha);
@@ -660,7 +659,7 @@ inline void chw2hwc_rocm(
     }
 
     // Copy host memory to device memory
-    hipError_t hipRes2 = hipMemcpyAsync(rocm_input_memory, src, input_size, hipMemcpyKind::hipMemcpyHostToDevice, stream);
+    hipError_t hipRes2 = hipMemcpyAsync(rocm_input_memory, src, input_size, hipMemcpyKind::hipMemcpyHostToDevice, rocmstream);
 
     if (hipRes2 != 0) {
         hipHostFree(rocm_input_memory);
@@ -684,7 +683,7 @@ inline void chw2hwc_rocm(
         hwc2chwROCmFun,
         gridDimX, gridDimY, gridDimZ,
         blockDimX, blockDimY, blockDimZ,
-        0, stream, args, nullptr);
+        0, rocmstream, args, nullptr);
 
     if (hipRes3 != 0) {
         hipHostFree(rocm_input_memory);
@@ -693,7 +692,7 @@ inline void chw2hwc_rocm(
     }
 
     // Copy device memory to host memory
-    hipError_t hipRes5 = hipMemcpyAsync(dst, rocm_output_memory, output_size, hipMemcpyKind::hipMemcpyDeviceToHost, stream);
+    hipError_t hipRes5 = hipMemcpyAsync(dst, rocm_output_memory, output_size, hipMemcpyKind::hipMemcpyDeviceToHost, rocmstream);
 
     if (hipRes5 != 0) {
         hipHostFree(rocm_input_memory);
@@ -705,7 +704,7 @@ inline void chw2hwc_rocm(
     hipHostFree(rocm_input_memory);
     hipHostFree(rocm_output_memory);
 
-    hipError_t hipRes4 = hipStreamSynchronize(stream);
+    hipError_t hipRes4 = hipStreamSynchronize(rocmstream);
 
     if (hipRes4 != 0) {
         chw2hwc<float, uint8_t>(h, w, c, src, dst, alpha); return;
@@ -747,11 +746,11 @@ inline void hwc2chw_rocm(
         hwc2chwROCmFun,
         gridDimX, gridDimY, gridDimZ,
         blockDimX, blockDimY, blockDimZ,
-        0, stream, args, nullptr);
+        0, rocmstream, args, nullptr);
     if (hipRes0 != 0) {
         return;
     }
-    hipError_t hipRes1 = hipStreamSynchronize(stream);
+    hipError_t hipRes1 = hipStreamSynchronize(rocmstream);
     if (hipRes1 != 0) {
         return;
     }
@@ -787,11 +786,11 @@ inline void chw2hwc_rocm(
         hwc2chwROCmFun,
         gridDimX, gridDimY, gridDimZ,
         blockDimX, blockDimY, blockDimZ,
-        0, stream, args, nullptr);
+        0, rocmstream, args, nullptr);
     if (hipRes0 != 0) {
         return;
     }
-    hipError_t hipRes1 = hipStreamSynchronize(stream);
+    hipError_t hipRes1 = hipStreamSynchronize(rocmstream);
     if (hipRes1 != 0) {
         return;
     }

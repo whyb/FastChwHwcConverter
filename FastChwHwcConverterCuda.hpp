@@ -69,6 +69,7 @@ typedef int CUdevice;
 typedef void* CUcontext;
 typedef void* CUmodule;
 typedef void* CUfunction;
+typedef struct CUstream_st* CUstream;
 typedef unsigned long long CUdeviceptr;
 
 // NVIDIA CUDA Driver API function type define
@@ -76,6 +77,9 @@ typedef CUresult(*cuInit_t)(unsigned int);
 typedef CUresult(*cuDeviceGet_t)(CUdevice*, int);
 typedef CUresult(*cuCtxCreate_t)(CUcontext*, unsigned int, CUdevice);
 typedef CUresult(*cuCtxDestroy_t)(CUcontext);
+typedef CUresult(*cuStreamCreate_t)(CUstream*, unsigned int);
+typedef CUresult(*cuStreamDestroy_t)(CUstream);
+typedef CUresult(*cuStreamSynchronize_t)(CUstream);
 typedef CUresult(*cuModuleLoadDataEx_t)(CUmodule*, const void*, unsigned int, int*, void**);
 typedef CUresult(*cuModuleUnload_t)(CUmodule);
 typedef CUresult(*cuModuleGetFunction_t)(CUfunction*, CUmodule, const char*);
@@ -83,12 +87,16 @@ typedef CUresult(*cuLaunchKernel_t)(CUfunction, unsigned int, unsigned int, unsi
 typedef CUresult(*cuCtxSynchronize_t)(void);
 
 typedef CUresult(*cuMemAlloc_t)(CUdeviceptr*, size_t);
+typedef CUresult(*cuMemAllocAsync_t)(CUdeviceptr*, size_t, CUstream);
 typedef CUresult(*cuMemAllocHost_t)(void**, size_t);
 typedef CUresult(*cuMemFree_t)(CUdeviceptr);
+typedef CUresult(*cuMemFreeAsync_t)(CUdeviceptr, CUstream);
 typedef CUresult(*cuMemFreeHost_t)(void*);
 
 typedef CUresult(*cuMemcpyHtoD_t)(CUdeviceptr, const void*, size_t);
+typedef CUresult(*cuMemcpyHtoDAsync_t)(CUdeviceptr, const void*, size_t, CUstream);
 typedef CUresult(*cuMemcpyDtoH_t)(void*, CUdeviceptr, size_t);
+typedef CUresult(*cuMemcpyDtoHAsync_t)(void*, CUdeviceptr, size_t, CUstream);
 
 
 #ifdef _WIN32
@@ -102,17 +110,24 @@ static cuInit_t cuInit = nullptr;
 static cuDeviceGet_t cuDeviceGet = nullptr;
 static cuCtxCreate_t cuCtxCreate = nullptr;
 static cuCtxDestroy_t cuCtxDestroy = nullptr;
+static cuStreamCreate_t cuStreamCreate = nullptr;
+static cuStreamDestroy_t cuStreamDestroy = nullptr;
+static cuStreamSynchronize_t cuStreamSynchronize = nullptr;
 static cuModuleLoadDataEx_t cuModuleLoadDataEx = nullptr;
 static cuModuleUnload_t cuModuleUnload = nullptr;
 static cuModuleGetFunction_t cuModuleGetFunction = nullptr;
 static cuLaunchKernel_t cuLaunchKernel = nullptr;
 static cuCtxSynchronize_t cuCtxSynchronize = nullptr;
 static cuMemAlloc_t cuMemAlloc = nullptr;
+static cuMemAllocAsync_t cuMemAllocAsync = nullptr;
 static cuMemAllocHost_t cuMemAllocHost = nullptr;
 static cuMemFree_t cuMemFree = nullptr;
+static cuMemFreeAsync_t cuMemFreeAsync = nullptr;
 static cuMemFreeHost_t cuMemFreeHost = nullptr;
 static cuMemcpyHtoD_t cuMemcpyHtoD = nullptr;
+static cuMemcpyHtoDAsync_t cuMemcpyHtoDAsync = nullptr;
 static cuMemcpyDtoH_t cuMemcpyDtoH = nullptr;
+static cuMemcpyDtoHAsync_t cuMemcpyDtoHAsync = nullptr;
 
 static const char* cudaSource = R"(
   typedef unsigned char uint8_t;
@@ -149,6 +164,8 @@ static const char* cudaSource = R"(
 
 static CUfunction hwc2chwCUDAFun = nullptr;
 static CUfunction chw2hwcCUDAFun = nullptr;
+static CUstream cudastream = nullptr;
+static CUmodule cudamodule = nullptr;
 
 enum struct InitCUDAStatusEnum : int
 {
@@ -317,6 +334,9 @@ static inline bool initCudaDriverAPI()
     cuDeviceGet = (cuDeviceGet_t)(dlManager->getFunction(driver_dll, "cuDeviceGet"));
     cuCtxCreate = (cuCtxCreate_t)(dlManager->getFunction(driver_dll, "cuCtxCreate_v2"));
     cuCtxDestroy = (cuCtxDestroy_t)(dlManager->getFunction(driver_dll, "cuCtxDestroy_v2"));
+    cuStreamCreate = (cuStreamCreate_t)(dlManager->getFunction(driver_dll, "cuStreamCreate"));
+    cuStreamDestroy = (cuStreamDestroy_t)(dlManager->getFunction(driver_dll, "cuStreamDestroy_v2"));
+    cuStreamSynchronize = (cuStreamSynchronize_t)(dlManager->getFunction(driver_dll, "cuStreamSynchronize"));
     cuModuleLoadDataEx = (cuModuleLoadDataEx_t)(dlManager->getFunction(driver_dll, "cuModuleLoadDataEx"));
     cuModuleUnload = (cuModuleUnload_t)(dlManager->getFunction(driver_dll, "cuModuleUnload"));
     cuModuleGetFunction = (cuModuleGetFunction_t)(dlManager->getFunction(driver_dll, "cuModuleGetFunction"));
@@ -324,15 +344,21 @@ static inline bool initCudaDriverAPI()
     cuCtxSynchronize = (cuCtxSynchronize_t)(dlManager->getFunction(driver_dll, "cuCtxSynchronize"));
     cuMemAlloc = (cuMemAlloc_t)(dlManager->getFunction(driver_dll, "cuMemAlloc_v2"));
     cuMemAllocHost = (cuMemAllocHost_t)(dlManager->getFunction(driver_dll, "cuMemAllocHost_v2"));
+    cuMemAllocAsync = (cuMemAllocAsync_t)(dlManager->getFunction(driver_dll, "cuMemAllocAsync"));
     cuMemFree = (cuMemFree_t)(dlManager->getFunction(driver_dll, "cuMemFree_v2"));
+    cuMemFreeAsync = (cuMemFreeAsync_t)(dlManager->getFunction(driver_dll, "cuMemFreeAsync"));
     cuMemFreeHost = (cuMemFreeHost_t)(dlManager->getFunction(driver_dll, "cuMemFreeHost"));
     cuMemcpyHtoD = (cuMemcpyHtoD_t)(dlManager->getFunction(driver_dll, "cuMemcpyHtoD_v2"));
+    cuMemcpyHtoDAsync = (cuMemcpyHtoDAsync_t)(dlManager->getFunction(driver_dll, "cuMemcpyHtoDAsync_v2"));
     cuMemcpyDtoH = (cuMemcpyDtoH_t)(dlManager->getFunction(driver_dll, "cuMemcpyDtoH_v2"));
+    cuMemcpyDtoHAsync = (cuMemcpyDtoHAsync_t)(dlManager->getFunction(driver_dll, "cuMemcpyDtoHAsync_v2"));
 
     if (!cuInit || !cuDeviceGet || !cuCtxCreate || !cuModuleLoadDataEx ||
         !cuModuleGetFunction || !cuLaunchKernel || !cuCtxSynchronize ||
-        !cuMemAlloc || !cuMemAllocHost || !cuMemFree || !cuMemFreeHost ||
-        !cuMemcpyHtoD || !cuMemcpyDtoH) {
+        !cuStreamCreate || !cuStreamDestroy || !cuStreamSynchronize ||
+        !cuMemAlloc || !cuMemAllocAsync || !cuMemAllocHost ||
+        !cuMemFree || !cuMemFreeAsync || !cuMemFreeHost ||
+        !cuMemcpyHtoD || !cuMemcpyDtoH || !cuMemcpyHtoDAsync || !cuMemcpyDtoHAsync) {
         std::cerr << "Failed to load one or more CUDA Driver API functions." << std::endl;
         return false;
     }
@@ -358,30 +384,37 @@ static inline bool initCudaFunctions(std::string& compiledPtxStr)
         std::cerr << "cuCtxCreate failed with error " << cuRes << std::endl;
         return false;
     }
+    cuRes = cuStreamCreate(&cudastream, 0); //flag: CU_STREAM_DEFAULT = 0
+    if (cuRes != 0) {
+        std::cerr << "cuStreamCreate failed with error " << cuRes << std::endl;
+        return false;
+    }
 
     // 加载编译好的 PTX 模块到 GPU 内存中
-    CUmodule module;
-    cuRes = cuModuleLoadDataEx(&module, compiledPtxStr.c_str(), 0, nullptr, nullptr);
+    cuRes = cuModuleLoadDataEx(&cudamodule, compiledPtxStr.c_str(), 0, nullptr, nullptr);
     if (cuRes != 0) {
         std::cerr << "cuModuleLoadDataEx failed with error " << cuRes << std::endl;
         cuCtxDestroy(context);
+        cuStreamDestroy(cudastream);
         return false;
     }
 
     // Get cuda module kernel function(cuda_hwc2chw)
-    cuRes = cuModuleGetFunction(&hwc2chwCUDAFun, module, "cuda_hwc2chw");
+    cuRes = cuModuleGetFunction(&hwc2chwCUDAFun, cudamodule, "cuda_hwc2chw");
     if (cuRes != 0) {
         std::cerr << "cuModuleGetFunction (cuda_hwc2chw) failed with error " << cuRes << std::endl;
-        cuModuleUnload(module);
+        cuModuleUnload(cudamodule);
         cuCtxDestroy(context);
+        cuStreamDestroy(cudastream);
         return false;
     }
     // Get cuda module kernel function(cuda_chw2hwc)
-    cuRes = cuModuleGetFunction(&chw2hwcCUDAFun, module, "cuda_chw2hwc");
+    cuRes = cuModuleGetFunction(&chw2hwcCUDAFun, cudamodule, "cuda_chw2hwc");
     if (cuRes != 0) {
         std::cerr << "cuModuleGetFunction (cuda_chw2hwc) failed with error " << cuRes << std::endl;
-        cuModuleUnload(module);
+        cuModuleUnload(cudamodule);
         cuCtxDestroy(context);
+        cuStreamDestroy(cudastream);
         return false;
     }
     return true;
@@ -429,6 +462,7 @@ static inline bool initAllCUDA()
         std::cerr << "Init Failed. Last error: " << lastCUDAErrorStr << std::endl;
         return false;
     }
+    return true;
 }
 
 /**
@@ -453,28 +487,27 @@ inline void hwc2chw_cuda(
     const size_t pixel_size = h * w * c;
     const size_t input_size = pixel_size * sizeof(uint8_t);
     const size_t output_size = pixel_size * sizeof(float);
-    void* cuda_input_memory = nullptr;
-    void* cuda_output_memory = nullptr;
+    CUdeviceptr cuda_input_memory = 0;
+    CUdeviceptr cuda_output_memory = 0;
     // alloc device memory
-    CUresult cuRes0 = cuMemAllocHost(&cuda_input_memory, input_size);
-    CUresult cuRes1 = cuMemAllocHost(&cuda_output_memory, output_size);
+    CUresult cuRes0 = cuMemAllocAsync(&cuda_input_memory, input_size, cudastream);
+    CUresult cuRes1 = cuMemAllocAsync(&cuda_output_memory, output_size, cudastream);
     if (cuRes0 != 0 || cuRes1 != 0) {
-        cuMemFreeHost(cuda_input_memory);
-        cuMemFreeHost(cuda_output_memory);
+        cuMemFreeAsync(cuda_input_memory, cudastream);
+        cuMemFreeAsync(cuda_output_memory, cudastream);
         hwc2chw<uint8_t, float>(h, w, c, src, dst, alpha); return;
     }
     // copy host memory to device memory
-    //CUresult cuRes2 = cuMemcpyHtoD(cuda_input_memory, src, input_size);
-    //if (cuRes2 != 0) {
-    //    cuMemFreeHost(cuda_input_memory);
-    //    cuMemFreeHost(cuda_output_memory);
-    //    hwc2chw<uint8_t, float>(h, w, c, src, dst, alpha); return;
-    //}
-    memcpy(cuda_input_memory, src, input_size);
+    CUresult cuRes2 = cuMemcpyHtoD(cuda_input_memory, src, input_size);
+    if (cuRes2 != 0) {
+        cuMemFreeAsync(cuda_input_memory, cudastream);
+        cuMemFreeAsync(cuda_output_memory, cudastream);
+        hwc2chw<uint8_t, float>(h, w, c, src, dst, alpha); return;
+    }
     // call cuda function
     if (hwc2chwCUDAFun == nullptr) {
-        cuMemFreeHost(cuda_input_memory);
-        cuMemFreeHost(cuda_output_memory);
+        cuMemFreeAsync(cuda_input_memory, cudastream);
+        cuMemFreeAsync(cuda_output_memory, cudastream);
         hwc2chw<uint8_t, float>(h, w, c, src, dst, alpha); return;
     }
     const unsigned int blockDimX = 32, blockDimY = 32, blockDimZ = 1;
@@ -492,26 +525,25 @@ inline void hwc2chw_cuda(
         blockDimX, blockDimY, blockDimZ,
         0, nullptr, args1, nullptr);
     if (cuRes3 != 0) {
-        cuMemFreeHost(cuda_input_memory);
-        cuMemFreeHost(cuda_output_memory);
-        hwc2chw<uint8_t, float>(h, w, c, src, dst, alpha); return;
-    }
-    CUresult cuRes4 = cuCtxSynchronize();
-    if (cuRes4 != 0) {
-        cuMemFreeHost(cuda_input_memory);
-        cuMemFreeHost(cuda_output_memory);
+        cuMemFreeAsync(cuda_input_memory, cudastream);
+        cuMemFreeAsync(cuda_output_memory, cudastream);
         hwc2chw<uint8_t, float>(h, w, c, src, dst, alpha); return;
     }
     // copy device memory to host memory
-    //CUresult cuRes5 = cuMemcpyDtoH(dst, cuda_output_memory, output_size);
-    //if (cuRes5 != 0) {
-    //    cuMemFreeHost(cuda_input_memory);
-    //    cuMemFreeHost(cuda_output_memory);
-    //    hwc2chw<uint8_t, float>(h, w, c, src, dst, alpha); return;
-    //}
-    memcpy(dst, cuda_output_memory, output_size);
-    cuMemFreeHost(cuda_input_memory);
-    cuMemFreeHost(cuda_output_memory);
+    CUresult cuRes4 = cuMemcpyDtoHAsync(dst, cuda_output_memory, output_size, cudastream);
+    if (cuRes4 != 0) {
+        cuMemFreeAsync(cuda_input_memory, cudastream);
+        cuMemFreeAsync(cuda_output_memory, cudastream);
+        hwc2chw<uint8_t, float>(h, w, c, src, dst, alpha); return;
+    }
+    CUresult cuRes5 = cuMemFreeAsync(cuda_input_memory, cudastream);
+    CUresult cuRes6 = cuMemFreeAsync(cuda_output_memory, cudastream);
+    CUresult cuRes7 = cuStreamSynchronize(cudastream);
+    if (cuRes7 != 0) {
+        cuMemFreeAsync(cuda_input_memory, cudastream);
+        cuMemFreeAsync(cuda_output_memory, cudastream);
+        hwc2chw<uint8_t, float>(h, w, c, src, dst, alpha); return;
+    }
     return;
 }
 
@@ -537,28 +569,27 @@ inline void chw2hwc_cuda(
     const size_t pixel_size = h * w * c;
     const size_t input_size = pixel_size * sizeof(float);
     const size_t output_size = pixel_size * sizeof(uint8_t);
-    void* cuda_input_memory = nullptr;
-    void* cuda_output_memory = nullptr;
+    CUdeviceptr cuda_input_memory = 0;
+    CUdeviceptr cuda_output_memory = 0;
     // alloc device memory
-    CUresult cuRes0 = cuMemAllocHost(&cuda_input_memory, input_size);
-    CUresult cuRes1 = cuMemAllocHost(&cuda_output_memory, output_size);
+    CUresult cuRes0 = cuMemAllocAsync(&cuda_input_memory, input_size, cudastream);
+    CUresult cuRes1 = cuMemAllocAsync(&cuda_output_memory, output_size, cudastream);
     if (cuRes0 != 0 || cuRes1 != 0) {
-        cuMemFreeHost(cuda_input_memory);
-        cuMemFreeHost(cuda_output_memory);
+        cuMemFreeAsync(cuda_input_memory, cudastream);
+        cuMemFreeAsync(cuda_output_memory, cudastream);
         chw2hwc<float, uint8_t>(h, w, c, src, dst, alpha); return;
     }
     // copy host memory to device memory
-    //CUresult cuRes2 = cuMemcpyHtoD(cuda_input_memory, src, input_size);
-    //if (cuRes2 != 0) {
-    //    cuMemFreeHost(cuda_input_memory);
-    //    cuMemFreeHost(cuda_output_memory);
-    //    chw2hwc<float, uint8_t>(h, w, c, src, dst, alpha); return;
-    //}
-    memcpy(cuda_input_memory, src, input_size);
+    CUresult cuRes2 = cuMemcpyHtoDAsync(cuda_input_memory, src, input_size, cudastream);
+    if (cuRes2 != 0) {
+        cuMemFreeAsync(cuda_input_memory, cudastream);
+        cuMemFreeAsync(cuda_output_memory, cudastream);
+        chw2hwc<float, uint8_t>(h, w, c, src, dst, alpha); return;
+    }
     // call cuda function
     if (chw2hwcCUDAFun == nullptr) {
-        cuMemFreeHost(cuda_input_memory);
-        cuMemFreeHost(cuda_output_memory);
+        cuMemFreeAsync(cuda_input_memory, cudastream);
+        cuMemFreeAsync(cuda_output_memory, cudastream);
         chw2hwc<float, uint8_t>(h, w, c, src, dst, alpha); return;
     }
     const unsigned int blockDimX = 32, blockDimY = 32, blockDimZ = 1;
@@ -576,26 +607,25 @@ inline void chw2hwc_cuda(
         blockDimX, blockDimY, blockDimZ,
         0, nullptr, args, nullptr);
     if (cuRes3 != 0) {
-        cuMemFreeHost(cuda_input_memory);
-        cuMemFreeHost(cuda_output_memory);
-        chw2hwc<float, uint8_t>(h, w, c, src, dst, alpha); return;
-    }
-    CUresult cuRes4 = cuCtxSynchronize();
-    if (cuRes4 != 0) {
-        cuMemFreeHost(cuda_input_memory);
-        cuMemFreeHost(cuda_output_memory);
+        cuMemFreeAsync(cuda_input_memory, cudastream);
+        cuMemFreeAsync(cuda_output_memory, cudastream);
         chw2hwc<float, uint8_t>(h, w, c, src, dst, alpha); return;
     }
     // copy device memory to host memory
-    //CUresult cuRes5 = cuMemcpyDtoH(dst, cuda_output_memory, output_size);
-    //if (cuRes5 != 0) {
-    //    cuMemFreeHost(cuda_input_memory);
-    //    cuMemFreeHost(cuda_output_memory);
-    //    chw2hwc<float, uint8_t>(h, w, c, src, dst, alpha); return;
-    //}
-    memcpy(dst, cuda_output_memory, output_size);
-    CUresult cuRes6 = cuMemFreeHost(cuda_input_memory);
-    CUresult cuRes7 = cuMemFreeHost(cuda_output_memory);
+    CUresult cuRes4 = cuMemcpyDtoHAsync(dst, cuda_output_memory, output_size, cudastream);
+    if (cuRes4 != 0) {
+        cuMemFreeAsync(cuda_input_memory, cudastream);
+        cuMemFreeAsync(cuda_output_memory, cudastream);
+        chw2hwc<float, uint8_t>(h, w, c, src, dst, alpha); return;
+    }
+    CUresult cuRes5 = cuMemFreeAsync(cuda_input_memory, cudastream);
+    CUresult cuRes6 = cuMemFreeAsync(cuda_output_memory, cudastream);
+    CUresult cuRes7 = cuStreamSynchronize(cudastream);
+    if (cuRes7 != 0) {
+        cuMemFreeAsync(cuda_input_memory, cudastream);
+        cuMemFreeAsync(cuda_output_memory, cudastream);
+        chw2hwc<float, uint8_t>(h, w, c, src, dst, alpha); return;
+    }
     return;
 }
 
