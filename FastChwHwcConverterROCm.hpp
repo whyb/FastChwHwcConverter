@@ -552,26 +552,26 @@ inline void hwc2chw_rocm(
     const size_t input_size = pixel_size * sizeof(uint8_t);
     const size_t output_size = pixel_size * sizeof(float);
 
-    void* rocm_input_memory = nullptr;
-    void* rocm_output_memory = nullptr;
+    hipDeviceptr_t rocm_input_memory = 0;
+    hipDeviceptr_t rocm_output_memory = 0;
 
     // Allocate host-pinned memory
-    hipError_t hipRes0 = hipHostMalloc(&rocm_input_memory, input_size, 0);
-    hipError_t hipRes1 = hipHostMalloc(&rocm_output_memory, output_size, 0);
+    hipError_t hipRes0 = hipMallocAsync(&rocm_input_memory, input_size, rocmstream);
+    hipError_t hipRes1 = hipMallocAsync(&rocm_output_memory, output_size, rocmstream);
 
     if (hipRes0 != 0 || hipRes1 != 0) {
-        hipHostFree(rocm_input_memory);
-        hipHostFree(rocm_output_memory);
+        hipFreeAsync(rocm_input_memory, rocmstream);
+        hipFreeAsync(rocm_output_memory, rocmstream);
         hwc2chw<uint8_t, float>(h, w, c, src, dst, alpha);
         return;
     }
 
     // Copy host memory to device memory
-    hipError_t hipRes2 = hipMemcpyAsync(rocm_input_memory, src, input_size, hipMemcpyKind::hipMemcpyHostToDevice, rocmstream);
+    hipError_t hipRes2 = hipMemcpyHtoDAsync(rocm_input_memory, src, input_size, rocmstream);
 
     if (hipRes2 != 0) {
-        hipHostFree(rocm_input_memory);
-        hipHostFree(rocm_output_memory);
+        hipFreeAsync(rocm_input_memory, rocmstream);
+        hipFreeAsync(rocm_output_memory, rocmstream);
         hwc2chw<uint8_t, float>(h, w, c, src, dst, alpha);
         return;
     }
@@ -593,25 +593,25 @@ inline void hwc2chw_rocm(
         0, rocmstream, args, nullptr);
 
     if (hipRes3 != 0) {
-        hipHostFree(rocm_input_memory);
-        hipHostFree(rocm_output_memory);
+        hipFreeAsync(rocm_input_memory, rocmstream);
+        hipFreeAsync(rocm_output_memory, rocmstream);
         hwc2chw<uint8_t, float>(h, w, c, src, dst, alpha);
         return;
     }
 
     // Copy device memory to host memory
-    hipError_t hipRes5 = hipMemcpyAsync(dst, rocm_output_memory, output_size, hipMemcpyKind::hipMemcpyDeviceToHost, rocmstream);
+    hipError_t hipRes5 = hipMemcpyDtoHAsync(dst, rocm_output_memory, output_size, rocmstream);
 
     if (hipRes5 != 0) {
-        hipHostFree(rocm_input_memory);
-        hipHostFree(rocm_output_memory);
+        hipFreeAsync(rocm_input_memory, rocmstream);
+        hipFreeAsync(rocm_output_memory, rocmstream);
         hwc2chw<uint8_t, float>(h, w, c, src, dst, alpha);
         return;
     }
 
     // Free memory
-    hipHostFree(rocm_input_memory);
-    hipHostFree(rocm_output_memory);
+    hipFreeAsync(rocm_input_memory, rocmstream);
+    hipFreeAsync(rocm_output_memory, rocmstream);
 
     // Stream synchronization
     hipError_t hipRes4 = hipStreamSynchronize(rocmstream);
@@ -645,25 +645,25 @@ inline void chw2hwc_rocm(
     const size_t pixel_size = h * w * c;
     size_t input_size = pixel_size * sizeof(float);
     size_t output_size = pixel_size * sizeof(uint8_t);
-    void* rocm_input_memory = nullptr;
-    void* rocm_output_memory = nullptr;
+    hipDeviceptr_t rocm_input_memory = 0;
+    hipDeviceptr_t rocm_output_memory = 0;
 
     // Allocate device memory
-    hipError_t hipRes0 = hipHostMalloc(&rocm_input_memory, input_size, 0);
-    hipError_t hipRes1 = hipHostMalloc(&rocm_output_memory, output_size, 0);
+    hipError_t hipRes0 = hipMallocAsync(&rocm_input_memory, input_size, rocmstream);
+    hipError_t hipRes1 = hipMallocAsync(&rocm_output_memory, output_size, rocmstream);
 
     if (hipRes0 != 0 || hipRes1 != 0) {
-        hipHostFree(rocm_input_memory);
-        hipHostFree(rocm_output_memory);
+        hipFreeAsync(rocm_input_memory, rocmstream);
+        hipFreeAsync(rocm_output_memory, rocmstream);
         chw2hwc<float, uint8_t>(h, w, c, src, dst, alpha); return;
     }
 
     // Copy host memory to device memory
-    hipError_t hipRes2 = hipMemcpyAsync(rocm_input_memory, src, input_size, hipMemcpyKind::hipMemcpyHostToDevice, rocmstream);
+    hipError_t hipRes2 = hipMemcpyHtoDAsync(rocm_input_memory, src, input_size, rocmstream);
 
     if (hipRes2 != 0) {
-        hipHostFree(rocm_input_memory);
-        hipHostFree(rocm_output_memory);
+        hipFreeAsync(rocm_input_memory, rocmstream);
+        hipFreeAsync(rocm_output_memory, rocmstream);
         chw2hwc<float, uint8_t>(h, w, c, src, dst, alpha); return;
     }
 
@@ -686,23 +686,23 @@ inline void chw2hwc_rocm(
         0, rocmstream, args, nullptr);
 
     if (hipRes3 != 0) {
-        hipHostFree(rocm_input_memory);
-        hipHostFree(rocm_output_memory);
+        hipFreeAsync(rocm_input_memory, rocmstream);
+        hipFreeAsync(rocm_output_memory, rocmstream);
         chw2hwc<float, uint8_t>(h, w, c, src, dst, alpha); return;
     }
 
     // Copy device memory to host memory
-    hipError_t hipRes5 = hipMemcpyAsync(dst, rocm_output_memory, output_size, hipMemcpyKind::hipMemcpyDeviceToHost, rocmstream);
+    hipError_t hipRes5 = hipMemcpyDtoHAsync(dst, rocm_output_memory, output_size, rocmstream);
 
     if (hipRes5 != 0) {
-        hipHostFree(rocm_input_memory);
-        hipHostFree(rocm_output_memory);
+        hipFreeAsync(rocm_input_memory, rocmstream);
+        hipFreeAsync(rocm_output_memory, rocmstream);
         chw2hwc<float, uint8_t>(h, w, c, src, dst, alpha); return;
     }
 
     // Free memory
-    hipHostFree(rocm_input_memory);
-    hipHostFree(rocm_output_memory);
+    hipFreeAsync(rocm_input_memory, rocmstream);
+    hipFreeAsync(rocm_output_memory, rocmstream);
 
     hipError_t hipRes4 = hipStreamSynchronize(rocmstream);
 
@@ -725,7 +725,7 @@ inline void chw2hwc_rocm(
  */
 inline void hwc2chw_rocm(
     const size_t h, const size_t w, const size_t c,
-    void* src, void* dst,
+    hipDeviceptr_t src, hipDeviceptr_t dst,
     const float alpha = 1.f / 255.f) {
 
     const size_t pixel_size = h * w * c;
@@ -769,7 +769,7 @@ inline void hwc2chw_rocm(
  */
 inline void chw2hwc_rocm(
     const size_t c, const size_t h, const size_t w,
-    void* src, void* dst,
+    hipDeviceptr_t src, hipDeviceptr_t dst,
     const uint8_t alpha = 255.0f) {
     
     const unsigned int blockDimX = 32, blockDimY = 32, blockDimZ = 1;

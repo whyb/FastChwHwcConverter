@@ -42,15 +42,15 @@ int main() {
             //std::vector<uint8_t> out_uint8(pixel_size); // Inference output data(hwc)
 
             // 2. device memory
-            void* src_uint8 = 0;
-            void* src_float = 0;
-            hipHostMalloc(&src_uint8, pixel_size * sizeof(uint8_t), 0);
-            hipHostMalloc(&src_float, pixel_size * sizeof(float), 0);
+            hipDeviceptr_t src_uint8 = 0;
+            hipDeviceptr_t src_float = 0;
+            hipMalloc(&src_uint8, pixel_size * sizeof(uint8_t));
+            hipMalloc(&src_float, pixel_size * sizeof(float));
             
-            void* out_float = 0;
-            void* out_uint8 = 0;
-            hipHostMalloc(&out_float, pixel_size * sizeof(float), 0);
-            hipHostMalloc(&out_uint8, pixel_size * sizeof(uint8_t), 0);
+            hipDeviceptr_t out_float = 0;
+            hipDeviceptr_t out_uint8 = 0;
+            hipMalloc(&out_float, pixel_size * sizeof(float));
+            hipMalloc(&out_uint8, pixel_size * sizeof(uint8_t));
 
             auto startTime = std::chrono::high_resolution_clock::now();
             for (size_t i = 0; i < TEST_COUNT; ++i) {
@@ -79,10 +79,10 @@ int main() {
             auto chw2hwcDuration = std::chrono::duration_cast<std::chrono::microseconds>(endTime - startTime) / double(TEST_COUNT);
 
             // 2. device memory
-            hipHostFree(src_uint8);
-            hipHostFree(src_float);
-            hipHostFree(out_float);
-            hipHostFree(out_uint8);
+            hipFree(src_uint8);
+            hipFree(src_float);
+            hipFree(out_float);
+            hipFree(out_uint8);
 
             std::cout << width << ",\t" << height << ",\t" << channel << ",\t"
                 << std::fixed << std::setprecision(3)
