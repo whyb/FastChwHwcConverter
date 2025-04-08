@@ -58,11 +58,18 @@ jobs:
     - name: Install dependencies
       run: |
         choco install cmake --force
-        choco install opencv --version=4.10.0 --force
         choco install zip --force
+        cd c:
+        mkdir c:/dev
+        cd c:/dev
+        git clone https://github.com/microsoft/vcpkg.git
+        cd C:\dev\vcpkg
+        bootstrap-vcpkg.bat
+        setx PATH "%PATH%;C:\dev\vcpkg"
+        vcpkg install opencv:x64-windows-static
     
     - name: CMake Configure & Generate(x64)
-      run: cmake -S . -B build-x64 -DBUILD_EXAMPLE:BOOL="1" -DBUILD_EXAMPLE_OPENCV:BOOL="1" -DBUILD_BENCHMARK:BOOL="1" -DBUILD_CUDA_BENCHMARK:BOOL="1" -DBUILD_ROCM_BENCHMARK:BOOL="1" -DUSE_OPENMP:BOOL="1" -DOpenCV_DIR:PATH="C:\tools\opencv\build" -A x64 
+      run: cmake -S . -B build-x64 -DBUILD_EXAMPLE:BOOL="1" -DBUILD_EXAMPLE_OPENCV:BOOL="1" -DBUILD_BENCHMARK:BOOL="1" -DBUILD_CUDA_BENCHMARK:BOOL="1" -DBUILD_ROCM_BENCHMARK:BOOL="1" -DUSE_OPENMP:BOOL="1" -DCMAKE_TOOLCHAIN_FILE=C:/dev/vcpkg/scripts/buildsystems/vcpkg.cmake -A x64 
 
     - name: Build(x64)
       run: cmake --build build-x64 --config Release
