@@ -99,23 +99,28 @@ Simply include the header file `FastChwHwcConverter.hpp` in your project:
 #include "FastChwHwcConverter.hpp"
 ```
 
-### for GPU (CUDA)
-Simply include the header file `FastChwHwcConverterCuda.hpp` in your project:
+### for GPU (CUDA or ROCm)
+Simply include the header file `FastChwHwcConverterCuda.hpp` or `FastChwHwcConverterRocm.hpp` in your project:
 
 ```cpp
 #include "FastChwHwcConverterCuda.hpp"
 ```
 
-Usually you also need to copy a `nvrtc64_***_0.dll` (for Windows) or `libnvrtc.so`(for Linux) file in the CUDA Runtime SDK to the executable program directory, or set CUDA SDK HOME as a system environment variable.
+```cpp
+#include "FastChwHwcConverterROCm.hpp"
+```
 
-In addition, you need to download and install the latest version of the driver from the NVIDIA official website (recommended). Because this project will dynamically load driver file: `nvcuda.dll` (for Windows) or `libcuda.so`(for Linux).
+Usually you also need to copy the `nvrtc64_***_0.dll` `nvrtc-builtins64_***` (for Windows CUDA) or `hiprtc****.dll` `hiprtc-builtins****.dll` `amd_comgr_*.dll` `amd_comgr****.dll` (for Windows ROCm)  or `libnvrtc.so` (for Linux CUDA) or `libhiprtc.so` (for Linux ROCm) file in the CUDA/ROCm Runtime SDK to the executable program directory, or set CUDA/ROCm SDK HOME as a system environment variable.
+
+In addition, you need to download and install the latest version of the driver from the [NVIDIA drivers website](https://www.nvidia.com/Download/index.aspx) or [AMD drivers website](https://www.amd.com/en/support). Because this project will dynamically load driver file: `nvcuda.dll` (for Windows CUDA) or `amdhip64_6.dll` (for Windows ROCm) or `libcuda.so` (for Linux CUDA) or `libamdhip64.so` (for Linux ROCm).
 
 ## Requirements
 * C++11 or later
 * OpenMP support (optional, set USE_OPENMP to ON for high performance)
 * CMake v3.10 or later (optional)
 * OpenCV v4.0 or later (optional, if BUILD_EXAMPLE_OPENCV is ON)
-* CUDA 10+(optional, if you want to use cuda acceleration, And has NVIDIA GPU)
+* CUDA 11.2+ driver (optional, if you want to use CUDA acceleration, And NVIDIA GPU's compute capability > 3.5, more details see [here](https://developer.nvidia.com/cuda-gpus). )
+* ROCm 5.0+ driver (optional, if you want to use ROCm acceleration, hardware and system requirements see [here](https://rocm.docs.amd.com/projects/install-on-windows/en/latest/reference/system-requirements.html). )
 
 ## Let's Converter
 
