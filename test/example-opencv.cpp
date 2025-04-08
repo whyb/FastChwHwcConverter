@@ -19,13 +19,13 @@ int main() {
     // step 2. Load image data to src_uint8(8U3C)
 
     // step 3. Convert HWC(Height, Width, Channels) to CHW(Channels, Height, Width)
-    whyb::hwc2chw<uint8_t, float>(h, w, c, (uint8_t*)src_uint8_mat.data, (float*)src_float_mat.data);
+    whyb::cpu::hwc2chw<uint8_t, float>(h, w, c, (uint8_t*)src_uint8_mat.data, (float*)src_float_mat.data);
 
     // step 4. Do AI inference
     // input: src_float ==infer==> output: out_float
 
     // step 5. Convert CHW(Channels, Height, Width) to HWC(Height, Width, Channels)
-    whyb::chw2hwc<float, uint8_t>(c, h, w, (float*)out_float_mat.data, (uint8_t*)out_uint8_mat.data);
+    whyb::cpu::chw2hwc<float, uint8_t>(c, h, w, (float*)out_float_mat.data, (uint8_t*)out_uint8_mat.data);
 
     std::cout << "done" << std::endl;
     return 0;
