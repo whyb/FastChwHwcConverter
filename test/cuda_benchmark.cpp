@@ -7,11 +7,7 @@
 #define TEST_COUNT 100
 
 int main() {
-    bool init = whyb::initAllCUDA();
-    if (!init) { 
-        std::cout << "CUDA init error!" << std::endl;
-        return 0; 
-    }
+    if (!whyb::nvidia::init()) { return 0; }
     const std::vector<size_t> channels = { 1, 3, 4 };
     const std::vector<std::pair<size_t, size_t>> resolutions = {
         {426, 240},   // 240p  (SD)
@@ -59,7 +55,7 @@ int main() {
                 //whyb::hwc2chw_cuda(height, width, channel, (uint8_t*)src_uint8.data(), (float*)src_float.data(), 1.f/255.f);
 
                 // 2. device memory
-                whyb::hwc2chw_cuda(height, width, channel, src_uint8, src_float, 1.f / 255.f);
+                whyb::nvidia::hwc2chw(height, width, channel, src_uint8, src_float, 1.f / 255.f);
 
             }
             auto endTime = std::chrono::high_resolution_clock::now();
@@ -72,7 +68,7 @@ int main() {
                 //whyb::chw2hwc_cuda(channel, height, width, (float*)out_float.data(), (uint8_t*)out_uint8.data(), 255.f);
 
                 // 2. device memory
-                whyb::chw2hwc_cuda(channel, height, width, out_float, out_uint8, 255.f);
+                whyb::nvidia::chw2hwc(channel, height, width, out_float, out_uint8, 255.f);
 
             }
             endTime = std::chrono::high_resolution_clock::now();
@@ -90,6 +86,7 @@ int main() {
                 << chw2hwcDuration.count() / 1000.0 << "ms" << std::endl;
         }
     }
+    whyb::nvidia::release();
     std::cout << "CUDA Benchmark completed successfully!" << std::endl;
     return 0;
 }

@@ -162,554 +162,594 @@ static const char* cudaSource = R"(
 
 )";
 
-static CUfunction hwc2chwCUDAFun = nullptr;
-static CUfunction chw2hwcCUDAFun = nullptr;
-static CUstream cudastream = nullptr;
-static CUmodule cudamodule = nullptr;
-
 enum struct InitCUDAStatusEnum : int
 {
     Ready = 0,
     Inited = 1,
     Failed = 2,
 };
-static InitCUDAStatusEnum initCUDAStatus = InitCUDAStatusEnum::Ready;
-static std::string lastCUDAErrorStr = "";
-static std::mutex CUDAMutex;
 
 namespace whyb {
+    class nvidia {
+    private:
+        nvidia() {
+            static bool init0([]() {
+                return initAll();
+                }());
+        }
+    public:
+        ~nvidia() = default;
+        nvidia(const nvidia&) = delete;
+        nvidia& operator=(const nvidia&) = delete;
+        nvidia(nvidia&&) = delete;
+        nvidia& operator=(nvidia&&) = delete;
+    public:
+        static bool init() { return initAll(); }
+        static bool release() { return releaseAll(); }
+    public:
+        /**
+        * @brief Converts image data from HWC format to CHW format
+        *
+        * @param h Height of image
+        * @param w Width of image
+        * @param c Number of channels
+        * @param src Pointer to the source data in HWC format
+        * @param dst Pointer to the destination data in CHW format
+        * @param alpha Scaling factor
+        */
+        static void hwc2chw(
+            const size_t h, const size_t w, const size_t c,
+            const uint8_t* src, float* dst,
+            const float alpha = 1.f / 255.f) {
+            nvidia();
+            if (initCUDAStatus != InitCUDAStatusEnum::Inited) {
+                // use cpu
+                cpu::hwc2chw<uint8_t, float>(h, w, c, src, dst, alpha); return;
+            }
+            // use cuda
+            const size_t pixel_size = h * w * c;
+            const size_t input_size = pixel_size * sizeof(uint8_t);
+            const size_t output_size = pixel_size * sizeof(float);
+            CUdeviceptr cuda_input_memory = 0;
+            CUdeviceptr cuda_output_memory = 0;
+            // alloc device memory
+            CUresult cuRes0 = cuMemAllocAsync(&cuda_input_memory, input_size, cudastream);
+            CUresult cuRes1 = cuMemAllocAsync(&cuda_output_memory, output_size, cudastream);
+            if (cuRes0 != 0 || cuRes1 != 0) {
+                cuMemFreeAsync(cuda_input_memory, cudastream);
+                cuMemFreeAsync(cuda_output_memory, cudastream);
+                cpu::hwc2chw<uint8_t, float>(h, w, c, src, dst, alpha); return;
+            }
+            // copy host memory to device memory
+            CUresult cuRes2 = cuMemcpyHtoD(cuda_input_memory, src, input_size);
+            if (cuRes2 != 0) {
+                cuMemFreeAsync(cuda_input_memory, cudastream);
+                cuMemFreeAsync(cuda_output_memory, cudastream);
+                cpu::hwc2chw<uint8_t, float>(h, w, c, src, dst, alpha); return;
+            }
+            // call cuda function
+            if (hwc2chwCUDAFun == nullptr) {
+                cuMemFreeAsync(cuda_input_memory, cudastream);
+                cuMemFreeAsync(cuda_output_memory, cudastream);
+                cpu::hwc2chw<uint8_t, float>(h, w, c, src, dst, alpha); return;
+            }
+            const unsigned int blockDimX = 32, blockDimY = 32, blockDimZ = 1;
+            const unsigned int gridDimX = ((unsigned int)w + blockDimX - 1) / blockDimX;
+            const unsigned int gridDimY = ((unsigned int)h + blockDimY - 1) / blockDimY;
+            const unsigned int gridDimZ = 1;
+            // for ready cuda kernel function(func_hwc2chw)
+            size_t arg_h_val = h;
+            size_t arg_w_val = w;
+            size_t arg_c_val = c;
+            float arg_alpha_val = alpha;
+            void* args1[] = { &arg_h_val, &arg_w_val, &arg_c_val, &cuda_input_memory, &cuda_output_memory, &arg_alpha_val };
+            CUresult cuRes3 = cuLaunchKernel(
+                hwc2chwCUDAFun, gridDimX, gridDimY, gridDimZ,
+                blockDimX, blockDimY, blockDimZ,
+                0, nullptr, args1, nullptr);
+            if (cuRes3 != 0) {
+                cuMemFreeAsync(cuda_input_memory, cudastream);
+                cuMemFreeAsync(cuda_output_memory, cudastream);
+                cpu::hwc2chw<uint8_t, float>(h, w, c, src, dst, alpha); return;
+            }
+            // copy device memory to host memory
+            CUresult cuRes4 = cuMemcpyDtoHAsync(dst, cuda_output_memory, output_size, cudastream);
+            if (cuRes4 != 0) {
+                cuMemFreeAsync(cuda_input_memory, cudastream);
+                cuMemFreeAsync(cuda_output_memory, cudastream);
+                cpu::hwc2chw<uint8_t, float>(h, w, c, src, dst, alpha); return;
+            }
+            CUresult cuRes5 = cuMemFreeAsync(cuda_input_memory, cudastream);
+            CUresult cuRes6 = cuMemFreeAsync(cuda_output_memory, cudastream);
+            CUresult cuRes7 = cuStreamSynchronize(cudastream);
+            if (cuRes7 != 0) {
+                cuMemFreeAsync(cuda_input_memory, cudastream);
+                cuMemFreeAsync(cuda_output_memory, cudastream);
+                cpu::hwc2chw<uint8_t, float>(h, w, c, src, dst, alpha); return;
+            }
+            return;
+        }
 
-static inline std::string compileCUDAWithNVRTC(const std::string& libraryName, const std::string& cudaSource)
-{
-    // dynamic load NVRTC lib
-    auto* dlManager = DynamicLibraryManager::instance();
-    auto nvrtcLib = dlManager->loadLibrary(libraryName);
-    if (!nvrtcLib)
-    {
-        std::cerr << "Failed to load NVRTC library: " << libraryName << std::endl;
-        return "";
-    }
+        /**
+        * @brief Converts image data from CHW format to HWC format
+        *
+        * @param c Number of channels
+        * @param h Height of image
+        * @param w Width of image
+        * @param src Pointer to the source data in CHW format
+        * @param dst Pointer to the destination data in HWC format
+        * @param alpha Scaling factor
+        */
+        static void chw2hwc(
+            const size_t c, const size_t h, const size_t w,
+            const float* src, uint8_t* dst,
+            const uint8_t alpha = 255.0f) {
+            nvidia();
+            if (initCUDAStatus != InitCUDAStatusEnum::Inited) {
+                // use cpu
+                cpu::chw2hwc<float, uint8_t>(c, h, w, src, dst, alpha); return;
+            }
+            // use cuda
+            const size_t pixel_size = h * w * c;
+            const size_t input_size = pixel_size * sizeof(float);
+            const size_t output_size = pixel_size * sizeof(uint8_t);
+            CUdeviceptr cuda_input_memory = 0;
+            CUdeviceptr cuda_output_memory = 0;
+            // alloc device memory
+            CUresult cuRes0 = cuMemAllocAsync(&cuda_input_memory, input_size, cudastream);
+            CUresult cuRes1 = cuMemAllocAsync(&cuda_output_memory, output_size, cudastream);
+            if (cuRes0 != 0 || cuRes1 != 0) {
+                cuMemFreeAsync(cuda_input_memory, cudastream);
+                cuMemFreeAsync(cuda_output_memory, cudastream);
+                cpu::chw2hwc<float, uint8_t>(h, w, c, src, dst, alpha); return;
+            }
+            // copy host memory to device memory
+            CUresult cuRes2 = cuMemcpyHtoDAsync(cuda_input_memory, src, input_size, cudastream);
+            if (cuRes2 != 0) {
+                cuMemFreeAsync(cuda_input_memory, cudastream);
+                cuMemFreeAsync(cuda_output_memory, cudastream);
+                cpu::chw2hwc<float, uint8_t>(h, w, c, src, dst, alpha); return;
+            }
+            // call cuda function
+            if (chw2hwcCUDAFun == nullptr) {
+                cuMemFreeAsync(cuda_input_memory, cudastream);
+                cuMemFreeAsync(cuda_output_memory, cudastream);
+                cpu::chw2hwc<float, uint8_t>(h, w, c, src, dst, alpha); return;
+            }
+            const unsigned int blockDimX = 32, blockDimY = 32, blockDimZ = 1;
+            const unsigned int gridDimX = ((unsigned int)w + blockDimX - 1) / blockDimX;
+            const unsigned int gridDimY = ((unsigned int)h + blockDimY - 1) / blockDimY;
+            const unsigned int gridDimZ = 1;
+            // for ready cuda kernel function(func_hwc2chw)
+            size_t arg_c_val = c;
+            size_t arg_h_val = h;
+            size_t arg_w_val = w;
+            uint8_t arg_alpha_val = alpha;
+            void* args[] = { &arg_c_val, &arg_h_val, &arg_w_val, &cuda_input_memory, &cuda_output_memory, &arg_alpha_val };
+            CUresult cuRes3 = cuLaunchKernel(
+                chw2hwcCUDAFun, gridDimX, gridDimY, gridDimZ,
+                blockDimX, blockDimY, blockDimZ,
+                0, nullptr, args, nullptr);
+            if (cuRes3 != 0) {
+                cuMemFreeAsync(cuda_input_memory, cudastream);
+                cuMemFreeAsync(cuda_output_memory, cudastream);
+                cpu::chw2hwc<float, uint8_t>(h, w, c, src, dst, alpha); return;
+            }
+            // copy device memory to host memory
+            CUresult cuRes4 = cuMemcpyDtoHAsync(dst, cuda_output_memory, output_size, cudastream);
+            if (cuRes4 != 0) {
+                cuMemFreeAsync(cuda_input_memory, cudastream);
+                cuMemFreeAsync(cuda_output_memory, cudastream);
+                cpu::chw2hwc<float, uint8_t>(h, w, c, src, dst, alpha); return;
+            }
+            CUresult cuRes5 = cuMemFreeAsync(cuda_input_memory, cudastream);
+            CUresult cuRes6 = cuMemFreeAsync(cuda_output_memory, cudastream);
+            CUresult cuRes7 = cuStreamSynchronize(cudastream);
+            if (cuRes7 != 0) {
+                cuMemFreeAsync(cuda_input_memory, cudastream);
+                cuMemFreeAsync(cuda_output_memory, cudastream);
+                cpu::chw2hwc<float, uint8_t>(h, w, c, src, dst, alpha); return;
+            }
+            return;
+        }
 
-    // Get NVRTC function points
-    auto nvrtcCreateProgram_fun = (nvrtcCreateProgram_t)(dlManager->getFunction(libraryName, "nvrtcCreateProgram"));
-    auto nvrtcCompileProgram_fun = (nvrtcCompileProgram_t)(dlManager->getFunction(libraryName, "nvrtcCompileProgram"));
-    auto nvrtcGetPTXSize_fun = (nvrtcGetPTXSize_t)(dlManager->getFunction(libraryName, "nvrtcGetPTXSize"));
-    auto nvrtcGetPTX_fun = (nvrtcGetPTX_t)(dlManager->getFunction(libraryName, "nvrtcGetPTX"));
-    auto nvrtcDestroyProgram_fun = (nvrtcDestroyProgram_t)(dlManager->getFunction(libraryName, "nvrtcDestroyProgram"));
-    auto nvrtcGetProgramLogSize_fun = (nvrtcGetProgramLogSize_t)(dlManager->getFunction(libraryName, "nvrtcGetProgramLogSize"));
-    auto nvrtcGetProgramLog_fun = (nvrtcGetProgramLog_t)(dlManager->getFunction(libraryName, "nvrtcGetProgramLog"));
-    auto nvrtcGetErrorString_fun = (nvrtcGetErrorString_t)(dlManager->getFunction(libraryName, "nvrtcGetErrorString"));
 
-    // Check function point is not nullptr
-    if (!nvrtcCreateProgram_fun || !nvrtcCompileProgram_fun || !nvrtcGetPTXSize_fun ||
-        !nvrtcGetPTX_fun || !nvrtcDestroyProgram_fun || !nvrtcGetProgramLogSize_fun ||
-        !nvrtcGetProgramLog_fun || !nvrtcGetErrorString_fun)
-    {
-        std::cerr << "Failed to load NVRTC functions from: " << libraryName << std::endl;
-        dlManager->unloadLibrary(libraryName);
-        return "";
-    }
+        /**
+        * @brief Converts image data from HWC format to CHW format
+        *
+        * @param h Height of image
+        * @param w Width of image
+        * @param c Number of channels
+        * @param src Cuda Memory (uint8_t) Pointer to the source data in HWC format
+        * @param dst Cuda Memory (float) Pointer to the destination data in CHW format
+        * @param alpha Scaling factor
+        */
+        static void hwc2chw(
+            const size_t h, const size_t w, const size_t c,
+            CUdeviceptr src, CUdeviceptr dst,
+            const float alpha = 1.f / 255.f) {
+            nvidia();
+            const size_t pixel_size = h * w * c;
+            const size_t input_size = pixel_size * sizeof(uint8_t);
+            const size_t output_size = pixel_size * sizeof(float);
 
-    // Create NVRTC Program Object
-    nvrtcProgram prog;
-    nvrtcResult res = nvrtcCreateProgram_fun(&prog, cudaSource.c_str(), "FastChwHwcConverterCuda.cu", 0, nullptr, nullptr);
-    if (res != NVRTC_SUCCESS)
-    {
-        std::cerr << "nvrtcCreateProgram failed: " << nvrtcGetErrorString_fun(res) << std::endl;
-        dlManager->unloadLibrary(libraryName);
-        return "";
-    }
+            const unsigned int blockDimX = 32, blockDimY = 32, blockDimZ = 1;
+            const unsigned int gridDimX = ((unsigned int)w + blockDimX - 1) / blockDimX;
+            const unsigned int gridDimY = ((unsigned int)h + blockDimY - 1) / blockDimY;
+            const unsigned int gridDimZ = 1;
+            // for ready cuda kernel function(func_hwc2chw)
+            size_t arg_h_val = h;
+            size_t arg_w_val = w;
+            size_t arg_c_val = c;
+            float arg_alpha_val = alpha;
+            void* args1[] = { &arg_h_val, &arg_w_val, &arg_c_val, &src, &dst, &arg_alpha_val };
+            CUresult cuRes0 = cuLaunchKernel(
+                hwc2chwCUDAFun, gridDimX, gridDimY, gridDimZ,
+                blockDimX, blockDimY, blockDimZ,
+                0, nullptr, args1, nullptr);
+            if (cuRes0 != 0) {
+                return;
+            }
+            CUresult cuRes1 = cuCtxSynchronize();
+            if (cuRes1 != 0) {
+                return;
+            }
+            return;
+        }
 
-    // compile CUDA source code
-    const char* options[] = { "-default-device", "--std=c++11" };
-    res = nvrtcCompileProgram_fun(prog, 2, options);
-    if (res != NVRTC_SUCCESS)
-    {
-        size_t logSize;
-        nvrtcGetProgramLogSize_fun(prog, &logSize);
-        std::string log(logSize, '\0');
-        nvrtcGetProgramLog_fun(prog, &log[0]);
-        std::cerr << "CUDA Compile error: " << log << std::endl;
-        nvrtcDestroyProgram_fun(&prog);
-        dlManager->unloadLibrary(libraryName);
-        return "";
-    }
+        /**
+        * @brief Converts image data from CHW format to HWC format
+        *
+        * @param c Number of channels
+        * @param h Height of image
+        * @param w Width of image
+        * @param src Cuda Memory (float) Pointer to the source data in CHW format
+        * @param dst Cuda Memory (uint8_t) Pointer to the destination data in HWC format
+        * @param alpha Scaling factor
+        */
+        static void chw2hwc(
+            const size_t c, const size_t h, const size_t w,
+            CUdeviceptr src, CUdeviceptr dst,
+            const uint8_t alpha = 255.0f) {
+            nvidia();
+            const unsigned int blockDimX = 32, blockDimY = 32, blockDimZ = 1;
+            const unsigned int gridDimX = ((unsigned int)w + blockDimX - 1) / blockDimX;
+            const unsigned int gridDimY = ((unsigned int)h + blockDimY - 1) / blockDimY;
+            const unsigned int gridDimZ = 1;
+            // for ready cuda kernel function(func_hwc2chw)
+            size_t arg_c_val = c;
+            size_t arg_h_val = h;
+            size_t arg_w_val = w;
+            uint8_t arg_alpha_val = alpha;
+            void* args[] = { &arg_c_val, &arg_h_val, &arg_w_val, &src, &dst, &arg_alpha_val };
+            CUresult cuRes0 = cuLaunchKernel(
+                chw2hwcCUDAFun, gridDimX, gridDimY, gridDimZ,
+                blockDimX, blockDimY, blockDimZ,
+                0, nullptr, args, nullptr);
+            if (cuRes0 != 0) {
+                return;
+            }
+            CUresult cuRes1 = cuCtxSynchronize();
+            if (cuRes1 != 0) {
+                return;
+            }
+            return;
+        }
+    private:
+        static std::string compileCUDAWithNVRTC(const std::string& libraryName, const std::string& cudaSource)
+        {
+            // dynamic load NVRTC lib
+            auto* dlManager = DynamicLibraryManager::instance();
+            auto nvrtcLib = dlManager->loadLibrary(libraryName);
+            if (!nvrtcLib)
+            {
+                std::cerr << "Failed to load NVRTC library: " << libraryName << std::endl;
+                return "";
+            }
 
-    // Get PTX String
-    size_t ptxSize;
-    nvrtcGetPTXSize_fun(prog, &ptxSize);
-    std::string ptx(ptxSize, '\0');
-    nvrtcGetPTX_fun(prog, &ptx[0]);
+            // Get NVRTC function points
+            auto nvrtcCreateProgram_fun = (nvrtcCreateProgram_t)(dlManager->getFunction(libraryName, "nvrtcCreateProgram"));
+            auto nvrtcCompileProgram_fun = (nvrtcCompileProgram_t)(dlManager->getFunction(libraryName, "nvrtcCompileProgram"));
+            auto nvrtcGetPTXSize_fun = (nvrtcGetPTXSize_t)(dlManager->getFunction(libraryName, "nvrtcGetPTXSize"));
+            auto nvrtcGetPTX_fun = (nvrtcGetPTX_t)(dlManager->getFunction(libraryName, "nvrtcGetPTX"));
+            auto nvrtcDestroyProgram_fun = (nvrtcDestroyProgram_t)(dlManager->getFunction(libraryName, "nvrtcDestroyProgram"));
+            auto nvrtcGetProgramLogSize_fun = (nvrtcGetProgramLogSize_t)(dlManager->getFunction(libraryName, "nvrtcGetProgramLogSize"));
+            auto nvrtcGetProgramLog_fun = (nvrtcGetProgramLog_t)(dlManager->getFunction(libraryName, "nvrtcGetProgramLog"));
+            auto nvrtcGetErrorString_fun = (nvrtcGetErrorString_t)(dlManager->getFunction(libraryName, "nvrtcGetErrorString"));
 
-    // Release NVRTC Program
-    nvrtcDestroyProgram_fun(&prog);
+            // Check function point is not nullptr
+            if (!nvrtcCreateProgram_fun || !nvrtcCompileProgram_fun || !nvrtcGetPTXSize_fun ||
+                !nvrtcGetPTX_fun || !nvrtcDestroyProgram_fun || !nvrtcGetProgramLogSize_fun ||
+                !nvrtcGetProgramLog_fun || !nvrtcGetErrorString_fun)
+            {
+                std::cerr << "Failed to load NVRTC functions from: " << libraryName << std::endl;
+                dlManager->unloadLibrary(libraryName);
+                return "";
+            }
 
-    // Release library
-    dlManager->unloadLibrary(libraryName);
-    return ptx;
-}
+            // Create NVRTC Program Object
+            nvrtcProgram prog;
+            nvrtcResult res = nvrtcCreateProgram_fun(&prog, cudaSource.c_str(), "FastChwHwcConverterCuda.cu", 0, nullptr, nullptr);
+            if (res != NVRTC_SUCCESS)
+            {
+                std::cerr << "nvrtcCreateProgram failed: " << nvrtcGetErrorString_fun(res) << std::endl;
+                dlManager->unloadLibrary(libraryName);
+                return "";
+            }
 
-static inline std::string findNVRTCModuleName()
-{
-    char currentDir[512] = {0};
+            // compile CUDA source code
+            const char* options[] = { "-default-device", "--std=c++11" };
+            res = nvrtcCompileProgram_fun(prog, 2, options);
+            if (res != NVRTC_SUCCESS)
+            {
+                size_t logSize;
+                nvrtcGetProgramLogSize_fun(prog, &logSize);
+                std::string log(logSize, '\0');
+                nvrtcGetProgramLog_fun(prog, &log[0]);
+                std::cerr << "CUDA Compile error: " << log << std::endl;
+                nvrtcDestroyProgram_fun(&prog);
+                dlManager->unloadLibrary(libraryName);
+                return "";
+            }
+
+            // Get PTX String
+            size_t ptxSize;
+            nvrtcGetPTXSize_fun(prog, &ptxSize);
+            std::string ptx(ptxSize, '\0');
+            nvrtcGetPTX_fun(prog, &ptx[0]);
+
+            // Release NVRTC Program
+            nvrtcDestroyProgram_fun(&prog);
+
+            // Release library
+            dlManager->unloadLibrary(libraryName);
+            return ptx;
+        }
+
+        static std::string findNVRTCModuleName()
+        {
+            char currentDir[512] = { 0 };
 #ifdef _WIN32
-    if (GetModuleFileNameA(nullptr, currentDir, MAX_PATH) == 0)
-    {
-        std::cerr << "Failed to get current directory on Windows." << std::endl;
-        return "";
-    }
+            if (GetModuleFileNameA(nullptr, currentDir, MAX_PATH) == 0)
+            {
+                std::cerr << "Failed to get current directory on Windows." << std::endl;
+                return "";
+            }
 
-    std::string executablePath(currentDir);
-    auto lastSlash = executablePath.find_last_of("\\/");
-    if (lastSlash != std::string::npos)
-    {
-        executablePath = executablePath.substr(0, lastSlash);
-    }
+            std::string executablePath(currentDir);
+            auto lastSlash = executablePath.find_last_of("\\/");
+            if (lastSlash != std::string::npos)
+            {
+                executablePath = executablePath.substr(0, lastSlash);
+            }
 #else
-    if (readlink("/proc/self/exe", currentDir, PATH_MAX) == -1)
-    {
-        std::cerr << "Failed to get current directory on Linux." << std::endl;
-        return "";
-    }
+            if (readlink("/proc/self/exe", currentDir, PATH_MAX) == -1)
+            {
+                std::cerr << "Failed to get current directory on Linux." << std::endl;
+                return "";
+            }
 
-    std::string executablePath(currentDir);
-    auto lastSlash = executablePath.find_last_of("/");
-    if (lastSlash != std::string::npos)
-    {
-        executablePath = executablePath.substr(0, lastSlash);
-    }
+            std::string executablePath(currentDir);
+            auto lastSlash = executablePath.find_last_of("/");
+            if (lastSlash != std::string::npos)
+            {
+                executablePath = executablePath.substr(0, lastSlash);
+            }
 #endif
-    // CUDA version list: 12.8 ~ 10.0
-    const std::vector<std::string> cudaVersions = {
-        "128_0", "127_0", "126_0", "125_0", "124_0", "123_0", "122_0", "121_0", "120_0",
-        "118_0", "117_0", "116_0", "115_0", "114_0", "113_0", "112_0", "111_0", "110_0",
-        "102_0", "101_0", "100_0"
+            // CUDA version list: 12.8 ~ 10.0
+            const std::vector<std::string> cudaVersions = {
+                "128_0", "127_0", "126_0", "125_0", "124_0", "123_0", "122_0", "121_0", "120_0",
+                "118_0", "117_0", "116_0", "115_0", "114_0", "113_0", "112_0", "111_0", "110_0",
+                "102_0", "101_0", "100_0"
+            };
+
+#ifdef _WIN32
+            for (const auto& version : cudaVersions)
+            {   //e.g. nvrtc64_128_0.dll
+                std::string libraryName = executablePath + "\\nvrtc64_" + version + ".dll";
+                DWORD fileAttr = GetFileAttributesA(libraryName.c_str());
+                if (fileAttr != INVALID_FILE_ATTRIBUTES && !(fileAttr & FILE_ATTRIBUTE_DIRECTORY))  // file exists
+                {
+                    return libraryName;
+                }
+            }
+#else
+            std::string libraryName = executablePath + "/libnvrtc.so";
+            if (access(libraryName.c_str(), F_OK) == 0)  // file exists
+            {
+                return libraryName;
+            }
+            for (const auto& version : cudaVersions)
+            {   //e.g. libnvrtc.so.128_0
+                std::string libraryName = executablePath + "/libnvrtc.so." + version;
+                if (access(libraryName.c_str(), F_OK) == 0)  // file exists
+                {
+                    return libraryName;
+                }
+            }
+#endif
+
+            std::cerr << "No suitable NVRTC library found in the current executable directory: " << executablePath << std::endl;
+            return "";
+        }
+
+        static bool initCudaDriverAPI()
+        {
+#ifdef _WIN32
+            const std::string driver_dll = "nvcuda.dll";
+#else
+            const std::string driver_dll = "libcuda.so";
+#endif
+            auto* dlManager = whyb::DynamicLibraryManager::instance();
+            auto driverLib = dlManager->loadLibrary(driver_dll);
+            if (!driverLib)
+            {
+                std::cerr << "Failed to load NVIDIA Driver API library: " << driver_dll << std::endl;
+                return false;
+            }
+            cuInit = (cuInit_t)(dlManager->getFunction(driver_dll, "cuInit"));
+            cuDeviceGet = (cuDeviceGet_t)(dlManager->getFunction(driver_dll, "cuDeviceGet"));
+            cuCtxCreate = (cuCtxCreate_t)(dlManager->getFunction(driver_dll, "cuCtxCreate_v2"));
+            cuCtxDestroy = (cuCtxDestroy_t)(dlManager->getFunction(driver_dll, "cuCtxDestroy_v2"));
+            cuStreamCreate = (cuStreamCreate_t)(dlManager->getFunction(driver_dll, "cuStreamCreate"));
+            cuStreamDestroy = (cuStreamDestroy_t)(dlManager->getFunction(driver_dll, "cuStreamDestroy_v2"));
+            cuStreamSynchronize = (cuStreamSynchronize_t)(dlManager->getFunction(driver_dll, "cuStreamSynchronize"));
+            cuModuleLoadDataEx = (cuModuleLoadDataEx_t)(dlManager->getFunction(driver_dll, "cuModuleLoadDataEx"));
+            cuModuleUnload = (cuModuleUnload_t)(dlManager->getFunction(driver_dll, "cuModuleUnload"));
+            cuModuleGetFunction = (cuModuleGetFunction_t)(dlManager->getFunction(driver_dll, "cuModuleGetFunction"));
+            cuLaunchKernel = (cuLaunchKernel_t)(dlManager->getFunction(driver_dll, "cuLaunchKernel"));
+            cuCtxSynchronize = (cuCtxSynchronize_t)(dlManager->getFunction(driver_dll, "cuCtxSynchronize"));
+            cuMemAlloc = (cuMemAlloc_t)(dlManager->getFunction(driver_dll, "cuMemAlloc_v2"));
+            cuMemAllocHost = (cuMemAllocHost_t)(dlManager->getFunction(driver_dll, "cuMemAllocHost_v2"));
+            cuMemAllocAsync = (cuMemAllocAsync_t)(dlManager->getFunction(driver_dll, "cuMemAllocAsync"));
+            cuMemFree = (cuMemFree_t)(dlManager->getFunction(driver_dll, "cuMemFree_v2"));
+            cuMemFreeAsync = (cuMemFreeAsync_t)(dlManager->getFunction(driver_dll, "cuMemFreeAsync"));
+            cuMemFreeHost = (cuMemFreeHost_t)(dlManager->getFunction(driver_dll, "cuMemFreeHost"));
+            cuMemcpyHtoD = (cuMemcpyHtoD_t)(dlManager->getFunction(driver_dll, "cuMemcpyHtoD_v2"));
+            cuMemcpyHtoDAsync = (cuMemcpyHtoDAsync_t)(dlManager->getFunction(driver_dll, "cuMemcpyHtoDAsync_v2"));
+            cuMemcpyDtoH = (cuMemcpyDtoH_t)(dlManager->getFunction(driver_dll, "cuMemcpyDtoH_v2"));
+            cuMemcpyDtoHAsync = (cuMemcpyDtoHAsync_t)(dlManager->getFunction(driver_dll, "cuMemcpyDtoHAsync_v2"));
+
+            if (!cuInit || !cuDeviceGet || !cuCtxCreate || !cuModuleLoadDataEx ||
+                !cuModuleGetFunction || !cuLaunchKernel || !cuCtxSynchronize ||
+                !cuStreamCreate || !cuStreamDestroy || !cuStreamSynchronize ||
+                !cuMemAlloc || !cuMemAllocAsync || !cuMemAllocHost ||
+                !cuMemFree || !cuMemFreeAsync || !cuMemFreeHost ||
+                !cuMemcpyHtoD || !cuMemcpyDtoH || !cuMemcpyHtoDAsync || !cuMemcpyDtoHAsync) {
+                std::cerr << "Failed to load one or more CUDA Driver API functions." << std::endl;
+                return false;
+            }
+            return true;
+        }
+
+        static bool initCudaFunctions(std::string& compiledPtxStr)
+        {
+            CUresult cuRes = cuInit(0);
+            if (cuRes != 0) {
+                std::cerr << "cuInit failed with error " << cuRes << std::endl;
+                return false;
+            }
+            CUdevice device;
+            cuRes = cuDeviceGet(&device, 0);
+            if (cuRes != 0) {
+                std::cerr << "cuDeviceGet failed with error " << cuRes << std::endl;
+                return false;
+            }
+            cuRes = cuCtxCreate(&context, 0, device);
+            if (cuRes != 0) {
+                std::cerr << "cuCtxCreate failed with error " << cuRes << std::endl;
+                return false;
+            }
+            cuRes = cuStreamCreate(&cudastream, 0); //flag: CU_STREAM_DEFAULT = 0
+            if (cuRes != 0) {
+                std::cerr << "cuStreamCreate failed with error " << cuRes << std::endl;
+                return false;
+            }
+
+            // Load PTX module to GPU Memory
+            cuRes = cuModuleLoadDataEx(&cudamodule, compiledPtxStr.c_str(), 0, nullptr, nullptr);
+            if (cuRes != 0) {
+                std::cerr << "cuModuleLoadDataEx failed with error " << cuRes << std::endl;
+                cuCtxDestroy(context);
+                cuStreamDestroy(cudastream);
+                return false;
+            }
+
+            // Get cuda module kernel function(cuda_hwc2chw)
+            cuRes = cuModuleGetFunction(&hwc2chwCUDAFun, cudamodule, "cuda_hwc2chw");
+            if (cuRes != 0) {
+                std::cerr << "cuModuleGetFunction (cuda_hwc2chw) failed with error " << cuRes << std::endl;
+                cuModuleUnload(cudamodule);
+                cuCtxDestroy(context);
+                cuStreamDestroy(cudastream);
+                return false;
+            }
+            // Get cuda module kernel function(cuda_chw2hwc)
+            cuRes = cuModuleGetFunction(&chw2hwcCUDAFun, cudamodule, "cuda_chw2hwc");
+            if (cuRes != 0) {
+                std::cerr << "cuModuleGetFunction (cuda_chw2hwc) failed with error " << cuRes << std::endl;
+                cuModuleUnload(cudamodule);
+                cuCtxDestroy(context);
+                cuStreamDestroy(cudastream);
+                return false;
+            }
+            return true;
+        }
+
+        static bool initAll()
+        {
+            std::lock_guard<std::mutex> lock(CUDAMutex);
+            if (initCUDAStatus == InitCUDAStatusEnum::Ready) {
+                std::string nvrtc_module_filename = findNVRTCModuleName();
+                if (nvrtc_module_filename.empty()) {
+                    std::cerr << "Could not found CUDA NVRTC dll failed." << std::endl;
+                    lastCUDAErrorStr = "Could not found CUDA NVRTC dll failed.";
+                    initCUDAStatus = InitCUDAStatusEnum::Failed;
+                    return false;
+                }
+                std::string ptx_str = compileCUDAWithNVRTC(nvrtc_module_filename, cudaSource);
+                if (ptx_str.empty()) {
+                    std::cerr << "Compile CUDA Source code failed." << std::endl;
+                    lastCUDAErrorStr = "Compile CUDA Source code failed.";
+                    initCUDAStatus = InitCUDAStatusEnum::Failed;
+                    return false;
+                }
+                bool init_cuda_driver = initCudaDriverAPI();
+                if (!init_cuda_driver) {
+                    std::cerr << "Failed to load CUDA Driver API functions." << std::endl;
+                    lastCUDAErrorStr = "Failed to load CUDA Driver API functions.";
+                    initCUDAStatus = InitCUDAStatusEnum::Failed;
+                    return false;
+                }
+                bool init_cuda_functions = initCudaFunctions(ptx_str);
+                if (!init_cuda_functions) {
+                    std::cerr << "Failed to load CUDA Driver API functions." << std::endl;
+                    lastCUDAErrorStr = "Failed to load CUDA Driver API functions.";
+                    initCUDAStatus = InitCUDAStatusEnum::Failed;
+                    return false;
+                }
+                initCUDAStatus = InitCUDAStatusEnum::Inited;
+                return true;
+            }
+            else if (initCUDAStatus == InitCUDAStatusEnum::Inited) {
+                return true;
+            }
+            else if (initCUDAStatus == InitCUDAStatusEnum::Failed) {
+                std::cerr << "Init Failed. Last error: " << lastCUDAErrorStr << std::endl;
+                return false;
+            }
+            return true;
+        }
+
+        static bool releaseAll()
+        {
+            CUresult cuRes = cuModuleUnload(cudamodule);
+            if (cuRes != 0) {
+                std::cerr << "hipModuleUnload failed with error " << cuRes << std::endl;
+                return false;
+            }
+            cuRes = cuStreamDestroy(cudastream);
+            if (cuRes != 0) {
+                std::cerr << "hipStreamDestroy failed with error " << cuRes << std::endl;
+                return false;
+            }
+            cuRes = cuCtxDestroy(context);
+            if (cuRes != 0) {
+                std::cerr << "hipCtxDestroy failed with error " << cuRes << std::endl;
+                return false;
+            }
+            return true;
+        }
+    private:
+        inline static InitCUDAStatusEnum initCUDAStatus = InitCUDAStatusEnum::Ready;
+        inline static std::string lastCUDAErrorStr = "";
+        inline static std::mutex CUDAMutex;
+
+        inline static CUfunction hwc2chwCUDAFun = nullptr;
+        inline static CUfunction chw2hwcCUDAFun = nullptr;
+        inline static CUcontext context;
+        inline static CUstream cudastream = nullptr;
+        inline static CUmodule cudamodule = nullptr;
     };
-
-#ifdef _WIN32
-    for (const auto& version : cudaVersions)
-    {   //e.g. nvrtc64_128_0.dll
-        std::string libraryName = executablePath + "\\nvrtc64_" + version + ".dll";
-        DWORD fileAttr = GetFileAttributesA(libraryName.c_str());
-        if (fileAttr != INVALID_FILE_ATTRIBUTES && !(fileAttr & FILE_ATTRIBUTE_DIRECTORY))  // file exists
-        {
-            return libraryName;
-        }
-    }
-#else
-    std::string libraryName = executablePath + "/libnvrtc.so";
-    if (access(libraryName.c_str(), F_OK) == 0)  // file exists
-    {
-        return libraryName;
-    }
-    for (const auto& version : cudaVersions)
-    {   //e.g. libnvrtc.so.128_0
-        std::string libraryName = executablePath + "/libnvrtc.so." + version;
-        if (access(libraryName.c_str(), F_OK) == 0)  // file exists
-        {
-            return libraryName;
-        }
-    }
-#endif
-
-    std::cerr << "No suitable NVRTC library found in the current executable directory: " << executablePath << std::endl;
-    return "";
-}
-
-static inline bool initCudaDriverAPI()
-{
-#ifdef _WIN32
-    const std::string driver_dll = "nvcuda.dll";
-#else
-    const std::string driver_dll = "libcuda.so";
-#endif
-    auto* dlManager = whyb::DynamicLibraryManager::instance();
-    auto driverLib = dlManager->loadLibrary(driver_dll);
-    if (!driverLib)
-    {
-        std::cerr << "Failed to load NVIDIA Driver API library: " << driver_dll << std::endl;
-        return false;
-    }
-    cuInit = (cuInit_t)(dlManager->getFunction(driver_dll, "cuInit"));
-    cuDeviceGet = (cuDeviceGet_t)(dlManager->getFunction(driver_dll, "cuDeviceGet"));
-    cuCtxCreate = (cuCtxCreate_t)(dlManager->getFunction(driver_dll, "cuCtxCreate_v2"));
-    cuCtxDestroy = (cuCtxDestroy_t)(dlManager->getFunction(driver_dll, "cuCtxDestroy_v2"));
-    cuStreamCreate = (cuStreamCreate_t)(dlManager->getFunction(driver_dll, "cuStreamCreate"));
-    cuStreamDestroy = (cuStreamDestroy_t)(dlManager->getFunction(driver_dll, "cuStreamDestroy_v2"));
-    cuStreamSynchronize = (cuStreamSynchronize_t)(dlManager->getFunction(driver_dll, "cuStreamSynchronize"));
-    cuModuleLoadDataEx = (cuModuleLoadDataEx_t)(dlManager->getFunction(driver_dll, "cuModuleLoadDataEx"));
-    cuModuleUnload = (cuModuleUnload_t)(dlManager->getFunction(driver_dll, "cuModuleUnload"));
-    cuModuleGetFunction = (cuModuleGetFunction_t)(dlManager->getFunction(driver_dll, "cuModuleGetFunction"));
-    cuLaunchKernel = (cuLaunchKernel_t)(dlManager->getFunction(driver_dll, "cuLaunchKernel"));
-    cuCtxSynchronize = (cuCtxSynchronize_t)(dlManager->getFunction(driver_dll, "cuCtxSynchronize"));
-    cuMemAlloc = (cuMemAlloc_t)(dlManager->getFunction(driver_dll, "cuMemAlloc_v2"));
-    cuMemAllocHost = (cuMemAllocHost_t)(dlManager->getFunction(driver_dll, "cuMemAllocHost_v2"));
-    cuMemAllocAsync = (cuMemAllocAsync_t)(dlManager->getFunction(driver_dll, "cuMemAllocAsync"));
-    cuMemFree = (cuMemFree_t)(dlManager->getFunction(driver_dll, "cuMemFree_v2"));
-    cuMemFreeAsync = (cuMemFreeAsync_t)(dlManager->getFunction(driver_dll, "cuMemFreeAsync"));
-    cuMemFreeHost = (cuMemFreeHost_t)(dlManager->getFunction(driver_dll, "cuMemFreeHost"));
-    cuMemcpyHtoD = (cuMemcpyHtoD_t)(dlManager->getFunction(driver_dll, "cuMemcpyHtoD_v2"));
-    cuMemcpyHtoDAsync = (cuMemcpyHtoDAsync_t)(dlManager->getFunction(driver_dll, "cuMemcpyHtoDAsync_v2"));
-    cuMemcpyDtoH = (cuMemcpyDtoH_t)(dlManager->getFunction(driver_dll, "cuMemcpyDtoH_v2"));
-    cuMemcpyDtoHAsync = (cuMemcpyDtoHAsync_t)(dlManager->getFunction(driver_dll, "cuMemcpyDtoHAsync_v2"));
-
-    if (!cuInit || !cuDeviceGet || !cuCtxCreate || !cuModuleLoadDataEx ||
-        !cuModuleGetFunction || !cuLaunchKernel || !cuCtxSynchronize ||
-        !cuStreamCreate || !cuStreamDestroy || !cuStreamSynchronize ||
-        !cuMemAlloc || !cuMemAllocAsync || !cuMemAllocHost ||
-        !cuMemFree || !cuMemFreeAsync || !cuMemFreeHost ||
-        !cuMemcpyHtoD || !cuMemcpyDtoH || !cuMemcpyHtoDAsync || !cuMemcpyDtoHAsync) {
-        std::cerr << "Failed to load one or more CUDA Driver API functions." << std::endl;
-        return false;
-    }
-    return true;
-}
-
-static inline bool initCudaFunctions(std::string& compiledPtxStr)
-{
-    CUresult cuRes = cuInit(0);
-    if (cuRes != 0) {
-        std::cerr << "cuInit failed with error " << cuRes << std::endl;
-        return false;
-    }
-    CUdevice device;
-    cuRes = cuDeviceGet(&device, 0);
-    if (cuRes != 0) {
-        std::cerr << "cuDeviceGet failed with error " << cuRes << std::endl;
-        return false;
-    }
-    CUcontext context;
-    cuRes = cuCtxCreate(&context, 0, device);
-    if (cuRes != 0) {
-        std::cerr << "cuCtxCreate failed with error " << cuRes << std::endl;
-        return false;
-    }
-    cuRes = cuStreamCreate(&cudastream, 0); //flag: CU_STREAM_DEFAULT = 0
-    if (cuRes != 0) {
-        std::cerr << "cuStreamCreate failed with error " << cuRes << std::endl;
-        return false;
-    }
-
-    // 加载编译好的 PTX 模块到 GPU 内存中
-    cuRes = cuModuleLoadDataEx(&cudamodule, compiledPtxStr.c_str(), 0, nullptr, nullptr);
-    if (cuRes != 0) {
-        std::cerr << "cuModuleLoadDataEx failed with error " << cuRes << std::endl;
-        cuCtxDestroy(context);
-        cuStreamDestroy(cudastream);
-        return false;
-    }
-
-    // Get cuda module kernel function(cuda_hwc2chw)
-    cuRes = cuModuleGetFunction(&hwc2chwCUDAFun, cudamodule, "cuda_hwc2chw");
-    if (cuRes != 0) {
-        std::cerr << "cuModuleGetFunction (cuda_hwc2chw) failed with error " << cuRes << std::endl;
-        cuModuleUnload(cudamodule);
-        cuCtxDestroy(context);
-        cuStreamDestroy(cudastream);
-        return false;
-    }
-    // Get cuda module kernel function(cuda_chw2hwc)
-    cuRes = cuModuleGetFunction(&chw2hwcCUDAFun, cudamodule, "cuda_chw2hwc");
-    if (cuRes != 0) {
-        std::cerr << "cuModuleGetFunction (cuda_chw2hwc) failed with error " << cuRes << std::endl;
-        cuModuleUnload(cudamodule);
-        cuCtxDestroy(context);
-        cuStreamDestroy(cudastream);
-        return false;
-    }
-    return true;
-}
-
-static inline bool initAllCUDA()
-{
-    std::lock_guard<std::mutex> lock(CUDAMutex);
-    if (initCUDAStatus == InitCUDAStatusEnum::Ready) {
-        std::string nvrtc_module_filename = findNVRTCModuleName();
-        if (nvrtc_module_filename.empty()) {
-            std::cerr << "Could not found CUDA NVRTC dll failed." << std::endl;
-            lastCUDAErrorStr = "Could not found CUDA NVRTC dll failed.";
-            initCUDAStatus = InitCUDAStatusEnum::Failed;
-            return false;
-        }
-        std::string ptx_str = compileCUDAWithNVRTC(nvrtc_module_filename, cudaSource);
-        if (ptx_str.empty()) {
-            std::cerr << "Compile CUDA Source code failed." << std::endl;
-            lastCUDAErrorStr = "Compile CUDA Source code failed.";
-            initCUDAStatus = InitCUDAStatusEnum::Failed;
-            return false;
-        }
-        bool init_cuda_driver = initCudaDriverAPI();
-        if (!init_cuda_driver) {
-            std::cerr << "Failed to load CUDA Driver API functions." << std::endl;
-            lastCUDAErrorStr = "Failed to load CUDA Driver API functions.";
-            initCUDAStatus = InitCUDAStatusEnum::Failed;
-            return false;
-        }
-        bool init_cuda_functions = initCudaFunctions(ptx_str);
-        if (!init_cuda_functions) {
-            std::cerr << "Failed to load CUDA Driver API functions." << std::endl;
-            lastCUDAErrorStr = "Failed to load CUDA Driver API functions.";
-            initCUDAStatus = InitCUDAStatusEnum::Failed;
-            return false;
-        }
-        initCUDAStatus = InitCUDAStatusEnum::Inited;
-        return true;
-    }
-    else if (initCUDAStatus == InitCUDAStatusEnum::Inited) {
-        return true;
-    }
-    else if (initCUDAStatus == InitCUDAStatusEnum::Failed) {
-        std::cerr << "Init Failed. Last error: " << lastCUDAErrorStr << std::endl;
-        return false;
-    }
-    return true;
-}
-
-/**
- * @brief Converts image data from HWC format to CHW format
- *
- * @param h Height of image
- * @param w Width of image
- * @param c Number of channels
- * @param src Pointer to the source data in HWC format
- * @param dst Pointer to the destination data in CHW format
- * @param alpha Scaling factor
- */
-inline void hwc2chw_cuda(
-    const size_t h, const size_t w, const size_t c,
-    const uint8_t* src, float* dst,
-    const float alpha = 1.f/255.f) {
-    if (!initAllCUDA()) {
-        // use cpu
-        hwc2chw<uint8_t, float>(h, w, c, src, dst, alpha); return;
-    }
-    // use cuda
-    const size_t pixel_size = h * w * c;
-    const size_t input_size = pixel_size * sizeof(uint8_t);
-    const size_t output_size = pixel_size * sizeof(float);
-    CUdeviceptr cuda_input_memory = 0;
-    CUdeviceptr cuda_output_memory = 0;
-    // alloc device memory
-    CUresult cuRes0 = cuMemAllocAsync(&cuda_input_memory, input_size, cudastream);
-    CUresult cuRes1 = cuMemAllocAsync(&cuda_output_memory, output_size, cudastream);
-    if (cuRes0 != 0 || cuRes1 != 0) {
-        cuMemFreeAsync(cuda_input_memory, cudastream);
-        cuMemFreeAsync(cuda_output_memory, cudastream);
-        hwc2chw<uint8_t, float>(h, w, c, src, dst, alpha); return;
-    }
-    // copy host memory to device memory
-    CUresult cuRes2 = cuMemcpyHtoD(cuda_input_memory, src, input_size);
-    if (cuRes2 != 0) {
-        cuMemFreeAsync(cuda_input_memory, cudastream);
-        cuMemFreeAsync(cuda_output_memory, cudastream);
-        hwc2chw<uint8_t, float>(h, w, c, src, dst, alpha); return;
-    }
-    // call cuda function
-    if (hwc2chwCUDAFun == nullptr) {
-        cuMemFreeAsync(cuda_input_memory, cudastream);
-        cuMemFreeAsync(cuda_output_memory, cudastream);
-        hwc2chw<uint8_t, float>(h, w, c, src, dst, alpha); return;
-    }
-    const unsigned int blockDimX = 32, blockDimY = 32, blockDimZ = 1;
-    const unsigned int gridDimX = ((unsigned int)w + blockDimX - 1) / blockDimX;
-    const unsigned int gridDimY = ((unsigned int)h + blockDimY - 1) / blockDimY;
-    const unsigned int gridDimZ = 1;
-    // for ready cuda kernel function(func_hwc2chw)
-    size_t arg_h_val = h;
-    size_t arg_w_val = w;
-    size_t arg_c_val = c;
-    float arg_alpha_val = alpha;
-    void* args1[] = { &arg_h_val, &arg_w_val, &arg_c_val, &cuda_input_memory, &cuda_output_memory, &arg_alpha_val };
-    CUresult cuRes3 = cuLaunchKernel(
-        hwc2chwCUDAFun, gridDimX, gridDimY, gridDimZ,
-        blockDimX, blockDimY, blockDimZ,
-        0, nullptr, args1, nullptr);
-    if (cuRes3 != 0) {
-        cuMemFreeAsync(cuda_input_memory, cudastream);
-        cuMemFreeAsync(cuda_output_memory, cudastream);
-        hwc2chw<uint8_t, float>(h, w, c, src, dst, alpha); return;
-    }
-    // copy device memory to host memory
-    CUresult cuRes4 = cuMemcpyDtoHAsync(dst, cuda_output_memory, output_size, cudastream);
-    if (cuRes4 != 0) {
-        cuMemFreeAsync(cuda_input_memory, cudastream);
-        cuMemFreeAsync(cuda_output_memory, cudastream);
-        hwc2chw<uint8_t, float>(h, w, c, src, dst, alpha); return;
-    }
-    CUresult cuRes5 = cuMemFreeAsync(cuda_input_memory, cudastream);
-    CUresult cuRes6 = cuMemFreeAsync(cuda_output_memory, cudastream);
-    CUresult cuRes7 = cuStreamSynchronize(cudastream);
-    if (cuRes7 != 0) {
-        cuMemFreeAsync(cuda_input_memory, cudastream);
-        cuMemFreeAsync(cuda_output_memory, cudastream);
-        hwc2chw<uint8_t, float>(h, w, c, src, dst, alpha); return;
-    }
-    return;
-}
-
-/**
- * @brief Converts image data from CHW format to HWC format
- *
- * @param c Number of channels
- * @param h Height of image
- * @param w Width of image
- * @param src Pointer to the source data in CHW format
- * @param dst Pointer to the destination data in HWC format
- * @param alpha Scaling factor
- */
-inline void chw2hwc_cuda(
-    const size_t c, const size_t h, const size_t w,
-    const float* src, uint8_t* dst,
-    const uint8_t alpha = 255.0f) {
-    if (!initAllCUDA()) {
-        // use cpu
-        chw2hwc<float, uint8_t>(c, h, w, src, dst, alpha); return;
-    }
-    // use cuda
-    const size_t pixel_size = h * w * c;
-    const size_t input_size = pixel_size * sizeof(float);
-    const size_t output_size = pixel_size * sizeof(uint8_t);
-    CUdeviceptr cuda_input_memory = 0;
-    CUdeviceptr cuda_output_memory = 0;
-    // alloc device memory
-    CUresult cuRes0 = cuMemAllocAsync(&cuda_input_memory, input_size, cudastream);
-    CUresult cuRes1 = cuMemAllocAsync(&cuda_output_memory, output_size, cudastream);
-    if (cuRes0 != 0 || cuRes1 != 0) {
-        cuMemFreeAsync(cuda_input_memory, cudastream);
-        cuMemFreeAsync(cuda_output_memory, cudastream);
-        chw2hwc<float, uint8_t>(h, w, c, src, dst, alpha); return;
-    }
-    // copy host memory to device memory
-    CUresult cuRes2 = cuMemcpyHtoDAsync(cuda_input_memory, src, input_size, cudastream);
-    if (cuRes2 != 0) {
-        cuMemFreeAsync(cuda_input_memory, cudastream);
-        cuMemFreeAsync(cuda_output_memory, cudastream);
-        chw2hwc<float, uint8_t>(h, w, c, src, dst, alpha); return;
-    }
-    // call cuda function
-    if (chw2hwcCUDAFun == nullptr) {
-        cuMemFreeAsync(cuda_input_memory, cudastream);
-        cuMemFreeAsync(cuda_output_memory, cudastream);
-        chw2hwc<float, uint8_t>(h, w, c, src, dst, alpha); return;
-    }
-    const unsigned int blockDimX = 32, blockDimY = 32, blockDimZ = 1;
-    const unsigned int gridDimX = ((unsigned int)w + blockDimX - 1) / blockDimX;
-    const unsigned int gridDimY = ((unsigned int)h + blockDimY - 1) / blockDimY;
-    const unsigned int gridDimZ = 1;
-    // for ready cuda kernel function(func_hwc2chw)
-    size_t arg_c_val = c;
-    size_t arg_h_val = h;
-    size_t arg_w_val = w;
-    uint8_t arg_alpha_val = alpha;
-    void* args[] = { &arg_c_val, &arg_h_val, &arg_w_val, &cuda_input_memory, &cuda_output_memory, &arg_alpha_val };
-    CUresult cuRes3 = cuLaunchKernel(
-        chw2hwcCUDAFun, gridDimX, gridDimY, gridDimZ,
-        blockDimX, blockDimY, blockDimZ,
-        0, nullptr, args, nullptr);
-    if (cuRes3 != 0) {
-        cuMemFreeAsync(cuda_input_memory, cudastream);
-        cuMemFreeAsync(cuda_output_memory, cudastream);
-        chw2hwc<float, uint8_t>(h, w, c, src, dst, alpha); return;
-    }
-    // copy device memory to host memory
-    CUresult cuRes4 = cuMemcpyDtoHAsync(dst, cuda_output_memory, output_size, cudastream);
-    if (cuRes4 != 0) {
-        cuMemFreeAsync(cuda_input_memory, cudastream);
-        cuMemFreeAsync(cuda_output_memory, cudastream);
-        chw2hwc<float, uint8_t>(h, w, c, src, dst, alpha); return;
-    }
-    CUresult cuRes5 = cuMemFreeAsync(cuda_input_memory, cudastream);
-    CUresult cuRes6 = cuMemFreeAsync(cuda_output_memory, cudastream);
-    CUresult cuRes7 = cuStreamSynchronize(cudastream);
-    if (cuRes7 != 0) {
-        cuMemFreeAsync(cuda_input_memory, cudastream);
-        cuMemFreeAsync(cuda_output_memory, cudastream);
-        chw2hwc<float, uint8_t>(h, w, c, src, dst, alpha); return;
-    }
-    return;
-}
-
-
-/**
- * @brief Converts image data from HWC format to CHW format
- *
- * @param h Height of image
- * @param w Width of image
- * @param c Number of channels
- * @param src Cuda Memory (uint8_t) Pointer to the source data in HWC format
- * @param dst Cuda Memory (float) Pointer to the destination data in CHW format
- * @param alpha Scaling factor
- */
-inline void hwc2chw_cuda(
-    const size_t h, const size_t w, const size_t c,
-    CUdeviceptr src, CUdeviceptr dst,
-    const float alpha = 1.f / 255.f) {
-
-    const size_t pixel_size = h * w * c;
-    const size_t input_size = pixel_size * sizeof(uint8_t);
-    const size_t output_size = pixel_size * sizeof(float);
-
-    const unsigned int blockDimX = 32, blockDimY = 32, blockDimZ = 1;
-    const unsigned int gridDimX = ((unsigned int)w + blockDimX - 1) / blockDimX;
-    const unsigned int gridDimY = ((unsigned int)h + blockDimY - 1) / blockDimY;
-    const unsigned int gridDimZ = 1;
-    // for ready cuda kernel function(func_hwc2chw)
-    size_t arg_h_val = h;
-    size_t arg_w_val = w;
-    size_t arg_c_val = c;
-    float arg_alpha_val = alpha;
-    void* args1[] = { &arg_h_val, &arg_w_val, &arg_c_val, &src, &dst, &arg_alpha_val };
-    CUresult cuRes0 = cuLaunchKernel(
-        hwc2chwCUDAFun, gridDimX, gridDimY, gridDimZ,
-        blockDimX, blockDimY, blockDimZ,
-        0, nullptr, args1, nullptr);
-    if (cuRes0 != 0) {
-        return;
-    }
-    CUresult cuRes1 = cuCtxSynchronize();
-    if (cuRes1 != 0) {
-        return;
-    }
-    return;
-}
-
-/**
- * @brief Converts image data from CHW format to HWC format
- *
- * @param c Number of channels
- * @param h Height of image
- * @param w Width of image
- * @param src Cuda Memory (float) Pointer to the source data in CHW format
- * @param dst Cuda Memory (uint8_t) Pointer to the destination data in HWC format
- * @param alpha Scaling factor
- */
-inline void chw2hwc_cuda(
-    const size_t c, const size_t h, const size_t w,
-    CUdeviceptr src, CUdeviceptr dst,
-    const uint8_t alpha = 255.0f) {
-    
-    const unsigned int blockDimX = 32, blockDimY = 32, blockDimZ = 1;
-    const unsigned int gridDimX = ((unsigned int)w + blockDimX - 1) / blockDimX;
-    const unsigned int gridDimY = ((unsigned int)h + blockDimY - 1) / blockDimY;
-    const unsigned int gridDimZ = 1;
-    // for ready cuda kernel function(func_hwc2chw)
-    size_t arg_c_val = c;
-    size_t arg_h_val = h;
-    size_t arg_w_val = w;
-    uint8_t arg_alpha_val = alpha;
-    void* args[] = { &arg_c_val, &arg_h_val, &arg_w_val, &src, &dst, &arg_alpha_val };
-    CUresult cuRes0 = cuLaunchKernel(
-        chw2hwcCUDAFun, gridDimX, gridDimY, gridDimZ,
-        blockDimX, blockDimY, blockDimZ,
-        0, nullptr, args, nullptr);
-    if (cuRes0 != 0) {
-        return;
-    }
-    CUresult cuRes1 = cuCtxSynchronize();
-    if (cuRes1 != 0) {
-        return;
-    }
-    return;
-}
 
 } // namespace whyb

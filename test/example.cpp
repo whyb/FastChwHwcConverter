@@ -22,19 +22,20 @@ void cpu_example()
     // step 2. Load image data to src_uint8(8U3C)
 
     // step 3. Convert HWC(Height, Width, Channels) to CHW(Channels, Height, Width)
-    whyb::hwc2chw<uint8_t, float>(h, w, c, (uint8_t*)src_uint8.data(), (float*)src_float.data());
+    whyb::cpu::hwc2chw<uint8_t, float>(h, w, c, (uint8_t*)src_uint8.data(), (float*)src_float.data(), 1.f/255.f);
 
     // step 4. Do AI inference
     // input: src_float ==infer==> output: out_float
 
     // step 5. Convert CHW(Channels, Height, Width) to HWC(Height, Width, Channels)
-    whyb::chw2hwc<float, uint8_t>(c, h, w, (float*)out_float.data(), (uint8_t*)out_uint8.data());
+    whyb::cpu::chw2hwc<float, uint8_t>(c, h, w, (float*)out_float.data(), (uint8_t*)out_uint8.data(), 255.f);
 
     std::cout << "cpu example done" << std::endl;
 }
 
 void cuda_example()
 {
+    if (!whyb::nvidia::init()) { return; }
     const size_t c = 3;
     const size_t w = 1920;
     const size_t h = 1080;
@@ -50,19 +51,21 @@ void cuda_example()
     // step 2. Load image data to src_uint8(8U3C)
 
     // step 3. Convert HWC(Height, Width, Channels) to CHW(Channels, Height, Width)
-    whyb::hwc2chw_cuda(h, w, c, (uint8_t*)src_uint8.data(), (float*)src_float.data());
+    whyb::nvidia::hwc2chw(h, w, c, (uint8_t*)src_uint8.data(), (float*)src_float.data(), 1.f/255.f);
 
     // step 4. Do AI inference
     // input: src_float ==infer==> output: out_float
 
     // step 5. Convert CHW(Channels, Height, Width) to HWC(Height, Width, Channels)
-    whyb::chw2hwc_cuda(c, h, w, (float*)out_float.data(), (uint8_t*)out_uint8.data());
+    whyb::nvidia::chw2hwc(c, h, w, (float*)out_float.data(), (uint8_t*)out_uint8.data(), 255.f);
 
+    whyb::nvidia::release();
     std::cout << "cuda example done" << std::endl;
 }
 
 void rocm_example()
 {
+    if (!whyb::amd::init()) { return; }
     const size_t c = 3;
     const size_t w = 1920;
     const size_t h = 1080;
@@ -78,14 +81,15 @@ void rocm_example()
     // step 2. Load image data to src_uint8(8U3C)
 
     // step 3. Convert HWC(Height, Width, Channels) to CHW(Channels, Height, Width)
-    whyb::hwc2chw_rocm(h, w, c, (uint8_t*)src_uint8.data(), (float*)src_float.data());
+    whyb::amd::hwc2chw(h, w, c, (uint8_t*)src_uint8.data(), (float*)src_float.data(), 1.f / 255.f);
 
     // step 4. Do AI inference
     // input: src_float ==infer==> output: out_float
 
     // step 5. Convert CHW(Channels, Height, Width) to HWC(Height, Width, Channels)
-    whyb::chw2hwc_rocm(c, h, w, (float*)out_float.data(), (uint8_t*)out_uint8.data());
+    whyb::amd::chw2hwc(c, h, w, (float*)out_float.data(), (uint8_t*)out_uint8.data(), 255.f);
 
+    whyb::amd::release();
     std::cout << "rocm example done" << std::endl;
 }
 

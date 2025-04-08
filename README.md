@@ -38,13 +38,13 @@ Any similar type conversion code you find another project on GitHub will most li
 - [Features](#features)
 - [Installation](#installation)
 - [Requirements](#requirements)
-- [Let's Converter](#lets-converter)
-  - [HWC to CHW Conversion (CPU)](#hwc-to-chw-conversion-cpu)
-  - [CHW to HWC Conversion (CPU)](#chw-to-hwc-conversion-cpu)
-  - [HWC to CHW Conversion (CUDA)](#hwc-to-chw-conversion-cuda)
-  - [CHW to HWC Conversion (CUDA)](#chw-to-hwc-conversion-cuda)
-  - [HWC to CHW Conversion (ROCm)](#hwc-to-chw-conversion-rocm)
-  - [CHW to HWC Conversion (ROCm)](#chw-to-hwc-conversion-rocm)
+- [API Documents](#api-documents)
+  - [HWC -> CHW (CPU)](#hwc-to-chw-conversion-cpu)
+  - [CHW -> HWC (CPU)](#chw-to-hwc-conversion-cpu)
+  - [HWC -> CHW (CUDA)](#hwc-to-chw-conversion-cuda)
+  - [CHW -> HWC (CUDA)](#chw-to-hwc-conversion-cuda)
+  - [HWC -> CHW (ROCm)](#hwc-to-chw-conversion-rocm)
+  - [CHW -> HWC (ROCm)](#chw-to-hwc-conversion-rocm)
   - [Example](#example)
 - [Benchmark Performance Timing Results](#benchmark-performance-timing-results)
 - [Contact](#contact)
@@ -122,10 +122,10 @@ In addition, you need to download and install the latest version of the driver f
 * CUDA 11.2+ driver (optional, if you want to use CUDA acceleration, And NVIDIA GPU's compute capability > 3.5, more details see [here](https://developer.nvidia.com/cuda-gpus). )
 * ROCm 5.0+ driver (optional, if you want to use ROCm acceleration, hardware and system requirements see [here](https://rocm.docs.amd.com/projects/install-on-windows/en/latest/reference/system-requirements.html). )
 
-## Let's Converter
+## API Documents
 
 ### HWC to CHW Conversion (CPU)
-The `hwc2chw` function converts image data from HWC format to CHW format.
+The `whyb::cpu::hwc2chw()` function converts image data from HWC format to CHW format.
 ```cpp
 template <typename Stype, typename Dtype>
 void hwc2chw(
@@ -155,7 +155,7 @@ Parameters:
 * `stds`: Array of standard deviation values for normalization (default is {0.229, 0.224, 0.225}).
 
 ### CHW to HWC Conversion (CPU)
-The `chw2hwc` function converts image data from CHW format to HWC format.
+The `whyb::cpu::chw2hwc()` function converts image data from CHW format to HWC format.
 
 ```cpp
 template <typename Stype, typename Dtype>
@@ -180,9 +180,9 @@ Parameters:
 
 
 ### HWC to CHW Conversion (CUDA)
-The `hwc2chw_cuda` function converts image data from HWC format to CHW format.
+The `whyb::nvidia::hwc2chw()` function converts image data from HWC format to CHW format.
 ```cpp
-void hwc2chw_cuda(
+void hwc2chw(
     const size_t h, const size_t w, const size_t c,
     const uint8_t* src, float* dst,
     const float alpha = 1.f/255.f
@@ -197,12 +197,14 @@ Parameters:
 * `src`: Pointer to the source data(host memory) in HWC format.
 * `dst`: Pointer to the destination data(host memory) in CHW format.
 * `alpha`: Scaling factor (default is 1).
+
+**Note**: Please call whyb::nvidia::init() before the first use, and call whyb::nvidia::release() to release it after confirming that it will not be used anymore.
 
 ### CHW to HWC Conversion (CUDA)
-The `chw2hwc_cuda` function converts image data from CHW format to HWC format.
+The `whyb::nvidia::chw2hwc()` function converts image data from CHW format to HWC format.
 
 ```cpp
-void chw2hwc_cuda(
+void chw2hwc(
     const size_t c, const size_t h, const size_t w,
     const float* src, uint8_t* dst,
     const uint8_t alpha = 255.0f
@@ -217,11 +219,12 @@ Parameters:
 * `dst`: Pointer to the destination data(host memory) in HWC format.
 * `alpha`: Scaling factor (default is 1).
 
+**Note**: Please call whyb::nvidia::init() before the first use, and call whyb::nvidia::release() to release it after confirming that it will not be used anymore.
 
 ### HWC to CHW Conversion (ROCm)
-The `hwc2chw_rocm` function converts image data from HWC format to CHW format.
+The `whyb::amd::hwc2chw()` function converts image data from HWC format to CHW format.
 ```cpp
-void hwc2chw_rocm(
+void hwc2chw(
     const size_t h, const size_t w, const size_t c,
     const uint8_t* src, float* dst,
     const float alpha = 1.f/255.f
@@ -237,11 +240,13 @@ Parameters:
 * `dst`: Pointer to the destination data(host memory) in CHW format.
 * `alpha`: Scaling factor (default is 1).
 
+**Note**: Please call whyb::amd::init() before the first use, and call whyb::amd::release() to release it after confirming that it will not be used anymore.
+
 ### CHW to HWC Conversion (ROCm)
-The `chw2hwc_rocm` function converts image data from CHW format to HWC format.
+The `whyb::amd::chw2hwc()` function converts image data from CHW format to HWC format.
 
 ```cpp
-void chw2hwc_rocm(
+void chw2hwc(
     const size_t c, const size_t h, const size_t w,
     const float* src, uint8_t* dst,
     const uint8_t alpha = 255.0f
@@ -256,6 +261,7 @@ Parameters:
 * `dst`: Pointer to the destination data(host memory) in HWC format.
 * `alpha`: Scaling factor (default is 1).
 
+**Note**: Please call whyb::amd::init() before the first use, and call whyb::amd::release() to release it after confirming that it will not be used anymore.
 
 ### Example
 This example code(**test/example.cpp**) demonstrates how to use the FastChwHwcConverter and FastChwHwcConverterCuda library to convert image data from HWC format to CHW format, and then back to HWC format after AI inference.
@@ -263,6 +269,7 @@ This example code(**test/example.cpp**) demonstrates how to use the FastChwHwcCo
 ```cpp
 #include "FastChwHwcConverter.hpp"
 #include "FastChwHwcConverterCuda.hpp"
+#include "FastChwHwcConverterROCm.hpp"
 #include <vector>
 #include <cstdint>
 #include <iostream>
@@ -284,19 +291,20 @@ void cpu_example()
     // step 2. Load image data to src_uint8(8U3C)
 
     // step 3. Convert HWC(Height, Width, Channels) to CHW(Channels, Height, Width)
-    whyb::hwc2chw<uint8_t, float>(h, w, c, (uint8_t*)src_uint8.data(), (float*)src_float.data());
+    whyb::cpu::hwc2chw<uint8_t, float>(h, w, c, (uint8_t*)src_uint8.data(), (float*)src_float.data(), 1.f/255.f);
 
     // step 4. Do AI inference
     // input: src_float ==infer==> output: out_float
 
     // step 5. Convert CHW(Channels, Height, Width) to HWC(Height, Width, Channels)
-    whyb::chw2hwc<float, uint8_t>(c, h, w, (float*)out_float.data(), (uint8_t*)out_uint8.data());
+    whyb::cpu::chw2hwc<float, uint8_t>(c, h, w, (float*)out_float.data(), (uint8_t*)out_uint8.data(), 255.f);
 
     std::cout << "cpu example done" << std::endl;
 }
 
 void cuda_example()
 {
+    if (!whyb::nvidia::init()) { return; }
     const size_t c = 3;
     const size_t w = 1920;
     const size_t h = 1080;
@@ -312,20 +320,52 @@ void cuda_example()
     // step 2. Load image data to src_uint8(8U3C)
 
     // step 3. Convert HWC(Height, Width, Channels) to CHW(Channels, Height, Width)
-    whyb::hwc2chw_cuda(h, w, c, (uint8_t*)src_uint8.data(), (float*)src_float.data());
+    whyb::nvidia::hwc2chw(h, w, c, (uint8_t*)src_uint8.data(), (float*)src_float.data(), 1.f/255.f);
 
     // step 4. Do AI inference
     // input: src_float ==infer==> output: out_float
 
     // step 5. Convert CHW(Channels, Height, Width) to HWC(Height, Width, Channels)
-    whyb::chw2hwc_cuda(c, h, w, (float*)out_float.data(), (uint8_t*)out_uint8.data());
+    whyb::nvidia::chw2hwc(c, h, w, (float*)out_float.data(), (uint8_t*)out_uint8.data(), 255.f);
 
+    whyb::nvidia::release();
     std::cout << "cuda example done" << std::endl;
 }
 
+void rocm_example()
+{
+    if (!whyb::amd::init()) { return; }
+    const size_t c = 3;
+    const size_t w = 1920;
+    const size_t h = 1080;
+
+    // step 1. Defining input and output 
+    const size_t pixel_size = h * w * c;
+    std::vector<uint8_t> src_uint8(pixel_size); // Source data(hwc)
+    std::vector<float> src_float(pixel_size); // Source data(chw)
+
+    std::vector<float> out_float(pixel_size); // Inference output data(chw)
+    std::vector<uint8_t> out_uint8(pixel_size); // Inference output data(hwc)
+
+    // step 2. Load image data to src_uint8(8U3C)
+
+    // step 3. Convert HWC(Height, Width, Channels) to CHW(Channels, Height, Width)
+    whyb::amd::hwc2chw(h, w, c, (uint8_t*)src_uint8.data(), (float*)src_float.data(), 1.f / 255.f);
+
+    // step 4. Do AI inference
+    // input: src_float ==infer==> output: out_float
+
+    // step 5. Convert CHW(Channels, Height, Width) to HWC(Height, Width, Channels)
+    whyb::amd::chw2hwc(c, h, w, (float*)out_float.data(), (uint8_t*)out_uint8.data(), 255.f);
+
+    whyb::amd::release();
+    std::cout << "rocm example done" << std::endl;
+}
+
 int main() {
-    cpu_example();   // use cpu converter
-    cuda_example();  // use cuda converter
+    cpu_example();
+    cuda_example();
+    rocm_example();
     return 0;
 }
 ```
@@ -336,40 +376,37 @@ If you are using OpenCV's `cv::Mat`, please refer to the **test/example-opencv.c
 The table below shows the benchmark performance timing for different image dimensions, channels, and processing configurations.
 
     RAM: DDR5 2400MHz 4x32-bit channels
-
     CPU(OpenMP): Intel(R) Core(TM) i7-13700K
-
     GPU(CUDA): NVIDIA GeForce RTX 3060 Ti
-
     GPU(ROCm): AMD Radeon RX 6900 XT
 
-|       |     |    |    CPU   |    CPU   |CPU(OpenMP)|CPU(OpenMP)|   CUDA    |   CUDA  |   ROCm  |   ROCm  |
-|-------|-----|----|----------|----------|-----------|-----------|-----------|---------|---------|---------|
-|   W  |   H  |  C | hwc2chw  | chw2hwc  | hwc2chw   | chw2hwc   | hwc2chw   | chw2hwc | hwc2chw | chw2hwc |
-| 426  | 240  | 1  | 0.097ms  | 0.110ms  | 0.113ms   | 0.030ms   | 0.022ms   | 0.019ms | 0.059ms | 0.053ms |
-| 426  | 240  | 3  | 0.331ms  | 0.314ms  | 0.061ms   | 0.068ms   | 0.022ms   | 0.019ms | 0.062ms | 0.059ms |
-| 426  | 240  | 4  | 0.439ms  | 0.415ms  | 0.082ms   | 0.082ms   | 0.020ms   | 0.019ms | 0.062ms | 0.061ms |
-| 640  | 360  | 1  | 0.217ms  | 0.236ms  | 0.048ms   | 0.052ms   | 0.022ms   | 0.021ms | 0.062ms | 0.061ms |
-| 640  | 360  | 3  | 0.743ms  | 0.705ms  | 0.147ms   | 0.140ms   | 0.036ms   | 0.021ms | 0.060ms | 0.059ms |
-| 640  | 360  | 4  | 0.881ms  | 0.921ms  | 0.219ms   | 0.203ms   | 0.025ms   | 0.021ms | 0.057ms | 0.053ms |
-| 854  | 480  | 1  | 0.393ms  | 0.415ms  | 0.094ms   | 0.089ms   | 0.025ms   | 0.024ms | 0.063ms | 0.060ms |
-| 854  | 480  | 3  | 1.328ms  | 1.269ms  | 0.250ms   | 0.232ms   | 0.029ms   | 0.024ms | 0.052ms | 0.052ms |
-| 854  | 480  | 4  | 1.717ms  | 1.670ms  | 0.263ms   | 0.262ms   | 0.034ms   | 0.027ms | 0.054ms | 0.051ms |
-| 1280 | 720  | 1  | 0.873ms  | 0.937ms  | 0.130ms   | 0.180ms   | 0.053ms   | 0.040ms | 0.060ms | 0.052ms |
-| 1280 | 720  | 3  | 2.877ms  | 2.828ms  | 0.449ms   | 0.457ms   | 0.052ms   | 0.042ms | 0.061ms | 0.056ms |
-| 1280 | 720  | 4  | 3.558ms  | 3.848ms  | 0.719ms   | 0.616ms   | 0.054ms   | 0.045ms | 0.062ms | 0.056ms |
-| 1920 | 1080 | 1  | 1.949ms  | 2.136ms  | 0.374ms   | 0.342ms   | 0.081ms   | 0.067ms | 0.079ms | 0.060ms |
-| 1920 | 1080 | 3  | 6.587ms  | 6.469ms  | 1.000ms   | 0.672ms   | 0.087ms   | 0.074ms | 0.080ms | 0.064ms |
-| 1920 | 1080 | 4  | 8.144ms  | 8.615ms  | 0.832ms   | 0.914ms   | 0.103ms   | 0.080ms | 0.077ms | 0.057ms |
-| 2560 | 1440 | 1  | 3.530ms  | 3.800ms  | 0.423ms   | 0.476ms   | 0.114ms   | 0.116ms | 0.094ms | 0.074ms |
-| 2560 | 1440 | 3  | 11.470ms | 11.611ms | 1.323ms   | 1.169ms   | 0.142ms   | 0.127ms | 0.089ms | 0.070ms |
-| 2560 | 1440 | 4  | 14.139ms | 15.273ms | 2.391ms   | 2.567ms   | 0.154ms   | 0.136ms | 0.094ms | 0.075ms |
-| 3840 | 2160 | 1  | 7.976ms  | 8.494ms  | 1.103ms   | 1.387ms   | 0.234ms   | 0.227ms | 0.129ms | 0.097ms |
-| 3840 | 2160 | 3  | 26.299ms | 25.824ms | 5.339ms   | 4.438ms   | 0.307ms   | 0.253ms | 0.132ms | 0.096ms |
-| 3840 | 2160 | 4  | 32.941ms | 34.718ms | 5.805ms   | 4.514ms   | 0.323ms   | 0.272ms | 0.131ms | 0.097ms |
-| 7680 | 4320 | 1  | 31.536ms | 34.100ms | 5.742ms   | 4.976ms   | 0.836ms   | 0.741ms | 0.484ms | 0.214ms |
-| 7680 | 4320 | 3  | 102.875ms| 102.419ms| 19.261ms  | 17.294ms  | 1.057ms   | 0.890ms | 0.621ms | 0.222ms |
-| 7680 | 4320 | 4  | 133.081ms| 136.308ms| 23.398ms  | 18.445ms  | 1.144ms   | 1.013ms | 0.686ms | 0.220ms |
+|             |    CPU  |    CPU   |CPU(OpenMP)|CPU(OpenMP)|   CUDA  |   CUDA  |   ROCm  |   ROCm  |
+|-------------|---------|----------|-----------|-----------|---------|---------|---------|---------|
+|  W x H x C  | hwc2chw | chw2hwc  | hwc2chw   | chw2hwc   | hwc2chw | chw2hwc | hwc2chw | chw2hwc |
+| 426x240x1 | 0.097ms | 0.110ms  | 0.113ms   | 0.030ms   | 0.022ms | 0.019ms | 0.059ms | 0.053ms |
+| 426x240x3 | 0.331ms | 0.314ms  | 0.061ms   | 0.068ms   | 0.022ms | 0.019ms | 0.062ms | 0.059ms |
+| 426x240x4 | 0.439ms | 0.415ms  | 0.082ms   | 0.082ms   | 0.020ms | 0.019ms | 0.062ms | 0.061ms |
+| 640x360x1 | 0.217ms | 0.236ms  | 0.048ms   | 0.052ms   | 0.022ms | 0.021ms | 0.062ms | 0.061ms |
+| 640x360x3 | 0.743ms | 0.705ms  | 0.147ms   | 0.140ms   | 0.036ms | 0.021ms | 0.060ms | 0.059ms |
+| 640x360x4 | 0.881ms | 0.921ms  | 0.219ms   | 0.203ms   | 0.025ms | 0.021ms | 0.057ms | 0.053ms |
+| 854x480x1 | 0.393ms | 0.415ms  | 0.094ms   | 0.089ms   | 0.025ms | 0.024ms | 0.063ms | 0.060ms |
+| 854x480x3 | 1.328ms | 1.269ms  | 0.250ms   | 0.232ms   | 0.029ms | 0.024ms | 0.052ms | 0.052ms |
+| 854x480x4 | 1.717ms | 1.670ms  | 0.263ms   | 0.262ms   | 0.034ms | 0.027ms | 0.054ms | 0.051ms |
+| 1280x720x1 | 0.873ms | 0.937ms  | 0.130ms   | 0.180ms   | 0.053ms | 0.040ms | 0.060ms | 0.052ms |
+| 1280x720x3 | 2.877ms | 2.828ms  | 0.449ms   | 0.457ms   | 0.052ms | 0.042ms | 0.061ms | 0.056ms |
+| 1280x720x4 | 3.558ms | 3.848ms  | 0.719ms   | 0.616ms   | 0.054ms | 0.045ms | 0.062ms | 0.056ms |
+| 1920x1080x1 | 1.949ms | 2.136ms  | 0.374ms   | 0.342ms   | 0.081ms | 0.067ms | 0.079ms | 0.060ms |
+| 1920x1080x3 | 6.587ms | 6.469ms  | 1.000ms   | 0.672ms   | 0.087ms | 0.074ms | 0.080ms | 0.064ms |
+| 1920x1080x4 | 8.144ms | 8.615ms  | 0.832ms   | 0.914ms   | 0.103ms | 0.080ms | 0.077ms | 0.057ms |
+| 2560x1440x1 | 3.530ms | 3.800ms  | 0.423ms   | 0.476ms   | 0.114ms | 0.116ms | 0.094ms | 0.074ms |
+| 2560x1440x3 | 11.47ms | 11.611ms | 1.323ms   | 1.169ms   | 0.142ms | 0.127ms | 0.089ms | 0.070ms |
+| 2560x1440x4 | 14.14ms | 15.273ms | 2.391ms   | 2.567ms   | 0.154ms | 0.136ms | 0.094ms | 0.075ms |
+| 3840x2160x1 | 7.976ms | 8.494ms  | 1.103ms   | 1.387ms   | 0.234ms | 0.227ms | 0.129ms | 0.097ms |
+| 3840x2160x3 | 26.30ms | 25.824ms | 5.339ms   | 4.438ms   | 0.307ms | 0.253ms | 0.132ms | 0.096ms |
+| 3840x2160x4 | 32.94ms | 34.718ms | 5.805ms   | 4.514ms   | 0.323ms | 0.272ms | 0.131ms | 0.097ms |
+| 7680x4320x1 | 31.54ms | 34.100ms | 5.742ms   | 4.976ms   | 0.836ms | 0.741ms | 0.484ms | 0.214ms |
+| 7680x4320x3 | 102.87ms| 102.42ms| 19.261ms  | 17.294ms  | 1.057ms | 0.890ms | 0.621ms | 0.222ms |
+| 7680x4320x4 | 133.08ms| 136.31ms| 23.398ms  | 18.445ms  | 1.144ms | 1.013ms | 0.686ms | 0.220ms |
 
 ## Contact
 For any questions or suggestions, please open an issue or contact the me.
