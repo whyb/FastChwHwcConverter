@@ -67,6 +67,9 @@ jobs:
         bootstrap-vcpkg.bat
         setx PATH "%PATH%;C:\dev\vcpkg"
         vcpkg install opencv:x64-windows-static
+        dir C:/dev/vcpkg/
+        dir C:/dev/vcpkg/scripts/
+        dir C:/dev/vcpkg/scripts/buildsystems
     
     - name: CMake Configure & Generate(x64)
       run: cmake -S . -B build-x64 -DBUILD_EXAMPLE:BOOL="1" -DBUILD_EXAMPLE_OPENCV:BOOL="1" -DBUILD_BENCHMARK:BOOL="1" -DBUILD_CUDA_BENCHMARK:BOOL="1" -DBUILD_ROCM_BENCHMARK:BOOL="1" -DUSE_OPENMP:BOOL="1" -DCMAKE_TOOLCHAIN_FILE=C:/dev/vcpkg/scripts/buildsystems/vcpkg.cmake -A x64 
