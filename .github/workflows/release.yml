@@ -60,8 +60,6 @@ jobs:
         choco install cmake --force
         choco install opencv --version=4.10.0 --force
         choco install zip --force
-        dir C:/tools/opencv/build
-        dir C:/tools/opencv/build/bin
     
     - name: CMake Configure & Generate(x64)
       run: cmake -S . -B build-x64 -DBUILD_EXAMPLE:BOOL="1" -DBUILD_EXAMPLE_OPENCV:BOOL="1" -DBUILD_BENCHMARK:BOOL="1" -DBUILD_CUDA_BENCHMARK:BOOL="1" -DBUILD_ROCM_BENCHMARK:BOOL="1" -DUSE_OPENMP:BOOL="1" -DOpenCV_DIR:PATH="C:/tools/opencv/build" -A x64 
@@ -75,7 +73,7 @@ jobs:
         curl -L -o ROCm_v6.2.4.zip https://github.com/whyb/FastChwHwcConverter/raw/ci-dependencies/ROCm_v6.2.4/ROCm_v6.2.4.zip
         tar -xf CUDA_v11.8.zip -C ./build-x64/Release/
         tar -xf ROCm_v6.2.4.zip -C ./build-x64/Release/
-        xcopy /Y C:\tools\opencv\build\bin\*.dll .\build-x64\Release\
+        copy C:\tools\opencv\build\x64\vc16\bin\opencv_world4100.dll .\build-x64\Release\
 
     - name: List build folder
       run: |
