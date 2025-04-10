@@ -32,7 +32,8 @@ jobs:
         sudo make install
         ls /usr/local/lib | grep libomp.a
 
-        git clone --branch 4.10.0 https://github.com/opencv/opencv.git
+        cd ../..
+        git clone --branch 4.x https://github.com/opencv/opencv.git
         cd opencv
         mkdir build && cd build
         cmake .. \
@@ -50,6 +51,7 @@ jobs:
           -DBUILD_opencv_imgproc=OFF \
           -DBUILD_opencv_flann=OFF \
           -DBUILD_opencv_python_bindings_generator=OFF \
+          -DBUILD_opencv_dnn=OFF \
           -DBUILD_TESTS=OFF \
           -DBUILD_DOCS=OFF \
           -DBUILD_EXAMPLES=OFF \
