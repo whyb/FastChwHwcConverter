@@ -32,10 +32,24 @@ jobs:
         sudo make install
         ls /usr/local/lib | grep libomp.a
 
-        git clone https://github.com/opencv/opencv.git
+        git clone --branch 4.10.0 https://github.com/opencv/opencv.git
         cd opencv
         mkdir build && cd build
-        cmake .. -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF
+        cmake .. \
+          -DCMAKE_BUILD_TYPE=Release \
+          -DBUILD_SHARED_LIBS=OFF \
+          -DBUILD_opencv_core=ON \
+          -DBUILD_opencv_imgcodecs=OFF \
+          -DBUILD_opencv_highgui=OFF \
+          -DBUILD_opencv_videoio=OFF \
+          -DBUILD_opencv_features2d=OFF \
+          -DBUILD_opencv_calib3d=OFF \
+          -DBUILD_opencv_ml=OFF \
+          -DBUILD_opencv_objdetect=OFF \
+          -DBUILD_opencv_photo=OFF \
+          -DBUILD_opencv_imgproc=OFF \
+          -DBUILD_opencv_flann=OFF \
+          -DBUILD_opencv_python_bindings_generator=OFF
         make -j$(nproc)
         sudo make install
         ls /usr/local/lib | grep libopencv.a
@@ -87,7 +101,20 @@ jobs:
         choco install zip --force
     
     - name: CMake Configure & Generate(x64)
-      run: cmake -S . -B build-x64 -DBUILD_EXAMPLE:BOOL="1" -DBUILD_EXAMPLE_OPENCV:BOOL="1" -DBUILD_BENCHMARK:BOOL="1" -DBUILD_CUDA_BENCHMARK:BOOL="1" -DBUILD_ROCM_BENCHMARK:BOOL="1" -DUSE_OPENMP:BOOL="1" -DOpenCV_DIR:PATH="C:/tools/opencv/build" -A x64 
+      run: |
+        cmake -S . \
+          -B build-x64 \
+          -DBUILD_EXAMPLE:BOOL="1" \
+          -DBUILD_EXAMPLE_OPENCV:BOOL="1" \
+          -DBUILD_BENCHMARK:BOOL="1" \
+          -DBUILD_CUDA_BENCHMARK:BOOL="1" \
+          -DBUILD_ROCM_BENCHMARK:BOOL="1" \
+          -DUSE_OPENMP:BOOL="1" \
+          -DOpenCV_DIR:PATH="C:/tools/opencv/build" \
+          -A x64 \
+          -DCMAKE_CXX_FLAGS="/MT" \
+          -DCMAKE_C_FLAGS="/MT"
+
 
     - name: Build(x64)
       run: cmake --build build-x64 --config Release
