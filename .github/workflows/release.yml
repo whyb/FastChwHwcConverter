@@ -49,7 +49,13 @@ jobs:
           -DBUILD_opencv_photo=OFF \
           -DBUILD_opencv_imgproc=OFF \
           -DBUILD_opencv_flann=OFF \
-          -DBUILD_opencv_python_bindings_generator=OFF
+          -DBUILD_opencv_python_bindings_generator=OFF \
+          -DBUILD_TESTS=OFF \
+          -DBUILD_DOCS=OFF \
+          -DBUILD_EXAMPLES=OFF \
+          -DINSTALL_C_EXAMPLES=OFF \
+          -DINSTALL_PYTHON_EXAMPLES=OFF \
+          -DINSTALL_TESTS=OFF
         make -j$(nproc)
         sudo make install
         ls /usr/local/lib | grep libopencv.a
@@ -101,19 +107,7 @@ jobs:
         choco install zip --force
     
     - name: CMake Configure & Generate(x64)
-      run: |
-        cmake -S . \
-          -B build-x64 \
-          -DBUILD_EXAMPLE:BOOL="1" \
-          -DBUILD_EXAMPLE_OPENCV:BOOL="1" \
-          -DBUILD_BENCHMARK:BOOL="1" \
-          -DBUILD_CUDA_BENCHMARK:BOOL="1" \
-          -DBUILD_ROCM_BENCHMARK:BOOL="1" \
-          -DUSE_OPENMP:BOOL="1" \
-          -DOpenCV_DIR:PATH="C:/tools/opencv/build" \
-          -A x64 \
-          -DCMAKE_CXX_FLAGS="/MT" \
-          -DCMAKE_C_FLAGS="/MT"
+      run: cmake -S . -B build-x64 -DBUILD_EXAMPLE:BOOL="1" -DBUILD_EXAMPLE_OPENCV:BOOL="1" -DBUILD_BENCHMARK:BOOL="1" -DBUILD_CUDA_BENCHMARK:BOOL="1" -DBUILD_ROCM_BENCHMARK:BOOL="1" -DUSE_OPENMP:BOOL="1" -DOpenCV_DIR:PATH="C:/tools/opencv/build" -A x64 -DCMAKE_CXX_FLAGS="/MT" -DCMAKE_C_FLAGS="/MT"
 
 
     - name: Build(x64)
