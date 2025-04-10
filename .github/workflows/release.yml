@@ -23,11 +23,36 @@ jobs:
       run: |
         sudo apt-get update -y
         sudo apt-get install -y cmake
-        sudo apt-get install -y libomp-dev
-        sudo apt-get install -y libopencv-dev
+        
+        git clone https://github.com/llvm/llvm-project.git
+        cd llvm-project/openmp
+        mkdir build && cd build
+        cmake .. -DCMAKE_BUILD_TYPE=Release -DLIBOMP_ENABLE_SHARED=OFF
+        make -j$(nproc)
+        sudo make install
+        ls /usr/local/lib | grep libomp.a
+
+        git clone https://github.com/opencv/opencv.git
+        cd opencv
+        mkdir build && cd build
+        cmake .. -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF
+        make -j$(nproc)
+        sudo make install
+        ls /usr/local/lib | grep libopencv.a
 
     - name: CMake Configure & Generate(x64)
-      run: cmake -S . -B build-x64 -DCMAKE_CXX_FLAGS="-static-libgcc -static-libstdc++" -DBUILD_EXAMPLE:BOOL="1" -DBUILD_EXAMPLE_OPENCV:BOOL="1" -DBUILD_BENCHMARK:BOOL="1" -DBUILD_CUDA_BENCHMARK:BOOL="1" -DBUILD_ROCM_BENCHMARK:BOOL="1" -DUSE_OPENMP:BOOL="1"
+      run: |
+        cmake -S . -B build-x64 \
+          -DCMAKE_CXX_FLAGS="-static-libgcc -static-libstdc++" \
+          -DCMAKE_EXE_LINKER_FLAGS="-static" \
+          -DBUILD_EXAMPLE:BOOL="1" \
+          -DBUILD_EXAMPLE_OPENCV:BOOL="1" \
+          -DBUILD_BENCHMARK:BOOL="1" \
+          -DBUILD_CUDA_BENCHMARK:BOOL="1" \
+          -DBUILD_ROCM_BENCHMARK:BOOL="1" \
+          -DUSE_OPENMP:BOOL="1" \
+          -DOpenMP_LIBRARY="/usr/local/lib/libomp.a" \
+          -DOpenCV_DIR="/usr/local/lib/cmake/opencv4"
 
     - name: Build(x64)
       run: cmake --build build-x64 --config Release
