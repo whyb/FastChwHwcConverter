@@ -24,6 +24,7 @@
 #include <cmath>
 #include <functional>
 #include <limits>
+#include <vector>
 
 #ifdef _OPENMP
 #include <omp.h>
@@ -36,6 +37,18 @@
 #else
 // If C++17 is not supported but C++11 is, implement std::clamp using std::min and std::max
 #define STD_CLAMP(value, low, high) ((std::max)(low, (std::min)(value, high)))
+#endif
+
+#if defined(__has_include)
+#  if __has_include(<execution>)
+#    include <execution>
+#    include <numeric> // for std::iota
+#    define HAS_STD_EXECUTION 1
+#  else
+#    define HAS_STD_EXECUTION 0
+#  endif
+#else
+#  define HAS_STD_EXECUTION 0
 #endif
 
 namespace whyb {
@@ -237,6 +250,88 @@ namespace whyb {
             static Type epsilon = std::numeric_limits<Type>::epsilon();
             return std::abs(a - b) < epsilon;
         }
+
+#if HAS_STD_EXECUTION
+        template <typename Stype, typename Dtype>
+        static void hwc2chw_execution_impl(
+            const size_t h, const size_t w, const size_t c,
+            const Stype* src, Dtype* dst,
+            const Dtype alpha = 1,
+            const bool clamp = false, const Dtype min_v = 0.0, const Dtype max_v = 1.0,
+            const bool normalized_mean_stds = false,
+            const std::array<float, 3> mean = { 0.485f, 0.456f, 0.406f },
+            const std::array<float, 3> stds = { 0.229f, 0.224f, 0.225f }) {
+
+            std::function<Dtype(const Stype&, const size_t&)> cvt_fun;
+            if (clamp) {
+                if (is_number_equal<Dtype>(alpha, 1)) {
+                    if (normalized_mean_stds) {
+                        cvt_fun = [&alpha, &min_v, &max_v, &mean, &stds](const Stype& src_val, const size_t& ch) {
+                            return static_cast<Dtype>(std_clamp<Dtype>((src_val - mean[ch]) / stds[ch], min_v, max_v));
+                        };
+                    }
+                    else {
+                        cvt_fun = [&alpha, &min_v, &max_v](const Stype& src_val, const size_t& /*ch*/) {
+                            return static_cast<Dtype>(std_clamp<Dtype>(src_val, min_v, max_v));
+                        };
+                    }
+                }
+                else {
+                    if (normalized_mean_stds) {
+                        cvt_fun = [&alpha, &min_v, &max_v, &mean, &stds](const Stype& src_val, const size_t& ch) {
+                            return static_cast<Dtype>(std_clamp<Dtype>((src_val * alpha - mean[ch]) / stds[ch], min_v, max_v));
+                        };
+                    }
+                    else {
+                        cvt_fun = [&alpha, &min_v, &max_v](const Stype& src_val, const size_t& /*ch*/) {
+                            return static_cast<Dtype>(std_clamp<Dtype>(src_val * alpha, min_v, max_v));
+                        };
+                    }
+                }
+            }
+            else {
+                if (is_number_equal<Dtype>(alpha, 1)) {
+                    if (normalized_mean_stds) {
+                        cvt_fun = [&alpha, &mean, &stds](const Stype& src_val, const size_t& ch) {
+                            return static_cast<Dtype>((src_val - mean[ch]) / stds[ch]);
+                        };
+                    }
+                    else {
+                        cvt_fun = [&alpha](const Stype& src_val, const size_t& /*ch*/) {
+                            return static_cast<Dtype>(src_val);
+                        };
+                    }
+                }
+                else {
+                    if (normalized_mean_stds) {
+                        cvt_fun = [&alpha, &mean, &stds](const Stype& src_val, const size_t& ch) {
+                            return static_cast<Dtype>((src_val * alpha - mean[ch]) / stds[ch]);
+                        };
+                    }
+                    else {
+                        cvt_fun = [&alpha](const Stype& src_val, const size_t& /*ch*/) {
+                            return static_cast<Dtype>(src_val * alpha);
+                        };
+                    }
+                }
+            }
+
+            // ch = i % c, s = i / c, dst_index = s + ch * (w * h)
+            const size_t hw_stride = w * h;
+            const size_t total_elements = hw_stride * c;
+
+            std::vector<size_t> indices(total_elements);
+            std::iota(indices.begin(), indices.end(), 0);
+            std::for_each(std::execution::par_unseq, indices.begin(), indices.end(),
+                [=, &cvt_fun](size_t idx) {
+                    size_t ch = idx % c;
+                    size_t s = idx / c;
+                    size_t dst_index = s + ch * hw_stride;
+                    dst[dst_index] = cvt_fun(src[idx], ch);
+                }
+            );
+        }
+#endif
     };
 
 }
