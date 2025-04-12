@@ -316,7 +316,6 @@ namespace whyb {
                 }
             }
 
-            // ch = i % c, s = i / c, dst_index = s + ch * (w * h)
             const size_t hw_stride = w * h;
             const size_t total_elements = hw_stride * c;
 
@@ -328,6 +327,54 @@ namespace whyb {
                     size_t s = idx / c;
                     size_t dst_index = s + ch * hw_stride;
                     dst[dst_index] = cvt_fun(src[idx], ch);
+                }
+            );
+        }
+
+        template <typename Stype, typename Dtype>
+        static void chw2hwc_execution_impl(
+            const size_t c, const size_t h, const size_t w,
+            const Stype* src, Dtype* dst,
+            const Dtype alpha = 1,
+            const bool clamp = false, const Dtype min_v = 0, const Dtype max_v = 255) {
+
+            std::function<Dtype(const Stype&, const size_t&)> cvt_fun;
+            if (clamp) {
+                if (is_number_equal<Dtype>(alpha, 1)) {
+                    cvt_fun = [&alpha, &min_v, &max_v](const Stype& src_val, const size_t& ch) {
+                        return static_cast<Dtype>(std_clamp<Dtype>(src_val * alpha, min_v, max_v));
+                    };
+                }
+                else {
+                    cvt_fun = [&alpha, &min_v, &max_v](const Stype& src_val, const size_t& ch) {
+                        return static_cast<Dtype>(std_clamp<Dtype>(src_val, min_v, max_v));
+                    };
+                }
+            }
+            else {
+                if (is_number_equal<Dtype>(alpha, 1)) {
+                    cvt_fun = [&alpha](const Stype& src_val, const size_t& /*ch*/) {
+                        return static_cast<Dtype>(src_val);
+                    };
+                }
+                else {
+                    cvt_fun = [&alpha](const Stype& src_val, const size_t& /*ch*/) {
+                        return static_cast<Dtype>(src_val * alpha);
+                    };
+                }
+            }
+
+            const size_t hw_stride = h * w;
+            const size_t total_elements = hw_stride * c;
+
+            std::vector<size_t> indices(total_elements);
+            std::iota(indices.begin(), indices.end(), 0);
+            std::for_each(std::execution::par_unseq, indices.begin(), indices.end(),
+                [=, &cvt_fun](size_t idx) {
+                    const size_t s = idx / c;
+                    const size_t ch = idx % c;
+                    const size_t src_index = s + ch * hw_stride;
+                    dst[idx] = cvt_fun(src[src_index], ch);
                 }
             );
         }
