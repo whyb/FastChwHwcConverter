@@ -16,6 +16,7 @@ option(BUILD_BENCHMARK "Build benchmark target" ON)
 option(BUILD_CUDA_BENCHMARK "Build NVIDIA CUDA benchmark target" ON)
 option(BUILD_ROCM_BENCHMARK "Build AMD ROCm benchmark target" ON)
 option(BUILD_EXAMPLE_OPENCV "Build example-opencv target" OFF)
+option(USE_TBB "Use Intel oneTBB for parallel programming" OFF)
 
 # Check for OpenMP support if the option is enabled
 if(USE_OPENMP)
@@ -29,6 +30,18 @@ if(USE_OPENMP)
     endif()
 else()
     set(OpenMP_FLAGS "")
+endif()
+
+if(USE_TBB)
+    find_package(TBB REQUIRED)
+    if(TBB_FOUND)
+        message(STATUS "Found Intel oneTBB")
+        set(TBB_FLAGS "-DTBB_USE_DEBUG=0")
+    else()
+        message(FATAL_ERROR "Intel oneTBB not found. Please install it or set the TBB_DIR variable.")
+    endif()
+else()
+    set(TBB_FLAGS "")
 endif()
 
 # Find OpenCV library

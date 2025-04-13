@@ -1,6 +1,6 @@
 /*
  * This file is part of [https://github.com/whyb/FastChwHwcConverter].
- * Copyright (C) [2024] [張小凡](https://github.com/whyb)
+ * Copyright (C) [2024-2025] [張小凡](https://github.com/whyb)
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -49,6 +49,12 @@
 #  endif
 #else
 #  define HAS_STD_EXECUTION 0
+#endif
+
+#ifdef USE_TBB
+#include <tbb/tbb.h>
+#include <tbb/parallel_for.h>
+#include <tbb/blocked_range.h>
 #endif
 
 namespace whyb {
@@ -230,27 +236,7 @@ namespace whyb {
 #endif
         }
 
-    private:
-        template <typename T>
-        inline static T std_clamp(const T& value, const T& low, const T& high) {
-            return STD_CLAMP(value, low, high);
-        }
-
-        /**
-        * @brief Determines if two numbers are approximately equal
-        *
-        * @tparam Type Type of the numbers
-        * @param a First number
-        * @param b Second number
-        * @return true if the numbers are approximately equal
-        * @return false if the numbers are not approximately equal
-        */
-        template <typename Type>
-        inline static bool is_number_equal(const Type& a, const Type& b) {
-            static Type epsilon = std::numeric_limits<Type>::epsilon();
-            return std::abs(a - b) < epsilon;
-        }
-
+    public:
 #if HAS_STD_EXECUTION
         template <typename Stype, typename Dtype>
         static void hwc2chw_execution_impl(
@@ -379,6 +365,28 @@ namespace whyb {
             );
         }
 #endif
+
+
+    private:
+        template <typename T>
+        inline static T std_clamp(const T& value, const T& low, const T& high) {
+            return STD_CLAMP(value, low, high);
+        }
+
+        /**
+        * @brief Determines if two numbers are approximately equal
+        *
+        * @tparam Type Type of the numbers
+        * @param a First number
+        * @param b Second number
+        * @return true if the numbers are approximately equal
+        * @return false if the numbers are not approximately equal
+        */
+        template <typename Type>
+        inline static bool is_number_equal(const Type& a, const Type& b) {
+            static Type epsilon = std::numeric_limits<Type>::epsilon();
+            return std::abs(a - b) < epsilon;
+        }
     };
 
 }
