@@ -563,7 +563,7 @@ namespace whyb {
 
         static std::string findHIPRTCModuleName()
         {
-            char currentDir[512] = { 0 };
+            char currentDir[MAX_PATH] = { 0 };
 #ifdef _WIN32
             if (GetModuleFileNameA(nullptr, currentDir, MAX_PATH) == 0)
             {

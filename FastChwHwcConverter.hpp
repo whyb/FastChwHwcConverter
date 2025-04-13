@@ -25,6 +25,7 @@
 #include <functional>
 #include <limits>
 #include <vector>
+#include <thread>
 
 #ifdef _OPENMP
 #include <omp.h>
