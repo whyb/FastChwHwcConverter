@@ -8,7 +8,7 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED True)
 
 # CMake option to control OpenMP usage 
-option(USE_OPENMP "Use OpenMP for parallel programming" ON)
+option(USE_OPENMP "Use OpenMP for parallel programming" OFF)
 
 # CMake options to control project generation
 option(BUILD_EXAMPLE "Build example target" ON)

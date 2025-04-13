@@ -137,8 +137,18 @@ namespace whyb {
                     }
                 }
             }
-
+#ifdef SINGLE_THREAD
+            size_t index = 0UL;
+            const size_t hw_stride = w * h;
+            for (size_t s = 0UL; s < hw_stride; ++s) {
+                size_t stride_index = s;
+                for (size_t c1 = 0UL; c1 < c; ++c1, stride_index += hw_stride) {
+                    dst[stride_index] = cvt_fun(src[index++], c1);
+                }
+            }
+#else
 #ifdef _OPENMP
+            // openmp
             const size_t hw_stride = w * h;
             const size_t num_threads = omp_get_max_threads();
             const size_t chunk_size = hw_stride / num_threads;
@@ -156,14 +166,29 @@ namespace whyb {
                 }
             }
 #else
-            size_t index = 0UL;
-            const size_t hw_stride = w * h;
-            for (size_t s = 0UL; s < hw_stride; ++s) {
-                size_t stride_index = s;
-                for (size_t c1 = 0UL; c1 < c; ++c1, stride_index += hw_stride) {
-                    dst[stride_index] = cvt_fun(src[index++], c1);
-                }
+            // c++ thread
+            static size_t thread_count = std::thread::hardware_concurrency();
+            const size_t hw_stride = h * w;
+            const size_t chunk_size = hw_stride / thread_count;
+
+            std::vector<std::thread> threads;
+            for (size_t thread_id = 0; thread_id < thread_count; ++thread_id) {
+                threads.emplace_back([&, thread_id]() {
+                    const size_t start_idx = thread_id * chunk_size;
+                    const size_t end_idx = (thread_id == thread_count - 1) ? hw_stride : (start_idx + chunk_size);
+                    size_t index = start_idx * c;
+                    for (size_t s = start_idx; s < end_idx; ++s) {
+                        size_t stride_index = s;
+                        for (size_t c1 = 0UL; c1 < c; ++c1, stride_index += hw_stride) {
+                            dst[stride_index] = cvt_fun(src[index++], c1);
+                        }
+                    }
+                    });
             }
+            for (auto& thread : threads) {
+                thread.join();
+            }
+#endif
 #endif
         }
 
@@ -206,8 +231,18 @@ namespace whyb {
                     cvt_fun = [&alpha](const Stype& src_val, const size_t& c) {return static_cast<Dtype>(src_val * alpha); };
                 }
             }
-
+#ifdef SINGLE_THREAD
+            size_t index = 0UL;
+            const size_t hw_stride = w * h;
+            for (size_t s = 0UL; s < hw_stride; ++s) {
+                size_t stride_index = s;
+                for (size_t c1 = 0UL; c1 < c; ++c1, stride_index += hw_stride) {
+                    dst[index++] = cvt_fun(src[stride_index], c1);
+                }
+            }
+#else
 #ifdef _OPENMP
+            // openmp
             const size_t hw_stride = w * h;
             const size_t num_threads = omp_get_max_threads();
             const size_t chunk_size = hw_stride / num_threads;
@@ -225,14 +260,29 @@ namespace whyb {
                 }
             }
 #else
-            size_t index = 0UL;
-            const size_t hw_stride = w * h;
-            for (size_t s = 0UL; s < hw_stride; ++s) {
-                size_t stride_index = s;
-                for (size_t c1 = 0UL; c1 < c; ++c1, stride_index += hw_stride) {
-                    dst[index++] = cvt_fun(src[stride_index], c1);
-                }
+            // c++ thread
+            static size_t thread_count = std::thread::hardware_concurrency();
+            const size_t hw_stride = h * w;
+            const size_t chunk_size = hw_stride / thread_count;
+
+            std::vector<std::thread> threads;
+            for (size_t thread_id = 0; thread_id < thread_count; ++thread_id) {
+                threads.emplace_back([&, thread_id]() {
+                    const size_t start_idx = thread_id * chunk_size;
+                    const size_t end_idx = (thread_id == thread_count - 1) ? hw_stride : (start_idx + chunk_size);
+                    size_t index = start_idx * c;
+                    for (size_t s = start_idx; s < end_idx; ++s) {
+                        size_t stride_index = s * c;
+                        for (size_t c1 = 0; c1 < c; ++c1) {
+                            dst[index++] = cvt_fun(src[stride_index + c1], c1);
+                        }
+                    }
+                });
             }
+            for (auto& thread : threads) {
+                thread.join();
+            }
+#endif
 #endif
         }
 
@@ -304,7 +354,7 @@ namespace whyb {
 
             const size_t hw_stride = w * h;
             const size_t total_elements = hw_stride * c;
-
+            
             std::vector<size_t> indices(total_elements);
             std::iota(indices.begin(), indices.end(), 0);
             std::for_each(std::execution::par_unseq, indices.begin(), indices.end(),
