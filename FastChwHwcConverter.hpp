@@ -184,7 +184,7 @@ namespace whyb {
                             dst[stride_index] = cvt_fun(src[index++], c1);
                         }
                     }
-                    });
+                });
             }
             for (auto& thread : threads) {
                 thread.join();
@@ -273,9 +273,9 @@ namespace whyb {
                     const size_t end_idx = (thread_id == thread_count - 1) ? hw_stride : (start_idx + chunk_size);
                     size_t index = start_idx * c;
                     for (size_t s = start_idx; s < end_idx; ++s) {
-                        size_t stride_index = s * c;
-                        for (size_t c1 = 0; c1 < c; ++c1) {
-                            dst[index++] = cvt_fun(src[stride_index + c1], c1);
+                        size_t stride_index = s;
+                        for (size_t c1 = 0UL; c1 < c; ++c1, stride_index += hw_stride) {
+                            dst[index++] = cvt_fun(src[stride_index], c1);
                         }
                     }
                 });

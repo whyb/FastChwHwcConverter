@@ -5,7 +5,6 @@
 #include <vector>
 #include <utility>
 
-#undef _OPENMP // If you do not want use OpenMP, Then undef it.
 //#define SINGLE_THREAD // If you want use test the single thread, Then define it.
 #include "FastChwHwcConverter.hpp"
 
