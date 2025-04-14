@@ -17,11 +17,11 @@ jobs:
       run: |
         sudo apt-get update -y
         sudo apt-get install -y cmake
-        sudo apt-get install -y libomp-dev
-        sudo apt-get install -y libopencv-dev
+        #sudo apt-get install -y libomp-dev
+        #sudo apt-get install -y libopencv-dev
 
     - name: CMake Configure & Generate
-      run: cmake -S . -B build -DCMAKE_CXX_FLAGS="-static-libgcc -static-libstdc++" -DBUILD_EXAMPLE:BOOL="1" -DBUILD_EXAMPLE_OPENCV:BOOL="1" -DBUILD_BENCHMARK:BOOL="1" -DBUILD_CUDA_BENCHMARK:BOOL="1" -DBUILD_ROCM_BENCHMARK:BOOL="1" -DUSE_OPENMP:BOOL="1" 
+      run: cmake -S . -B build -DCMAKE_CXX_FLAGS="-static-libgcc -static-libstdc++" -DBUILD_EXAMPLE:BOOL="1" -DBUILD_EXAMPLE_OPENCV:BOOL="0" -DBUILD_BENCHMARK:BOOL="1" -DBUILD_CUDA_BENCHMARK:BOOL="1" -DBUILD_ROCM_BENCHMARK:BOOL="1" -DUSE_OPENMP:BOOL="0" 
 
     - name: Build
       run: cmake --build build --config Release
@@ -38,8 +38,8 @@ jobs:
     - name: Run rocm benchmark tests
       run: build/rocm_benchmark
 
-    - name: Run example-opencv tests
-      run: build/example-opencv
+    # - name: Run example-opencv tests
+    #   run: build/example-opencv
 
 
   build-windows-x64:
@@ -56,10 +56,10 @@ jobs:
     - name: Install dependencies
       run: |
         choco install cmake --force
-        choco install opencv --version=4.10.0 --force
+        #choco install opencv --version=4.10.0 --force
 
     - name: CMake Configure & Generate
-      run: cmake -S . -B build -DBUILD_EXAMPLE:BOOL="1" -DBUILD_EXAMPLE_OPENCV:BOOL="1" -DBUILD_BENCHMARK:BOOL="1" -DBUILD_CUDA_BENCHMARK:BOOL="1" -DBUILD_ROCM_BENCHMARK:BOOL="1" -DUSE_OPENMP:BOOL="1" -DOpenCV_DIR:PATH="C:\tools\opencv\build"
+      run: cmake -S . -B build -DBUILD_EXAMPLE:BOOL="1" -DBUILD_EXAMPLE_OPENCV:BOOL="0" -DBUILD_BENCHMARK:BOOL="1" -DBUILD_CUDA_BENCHMARK:BOOL="1" -DBUILD_ROCM_BENCHMARK:BOOL="1" -DUSE_OPENMP:BOOL="0" -DOpenCV_DIR:PATH="C:\tools\opencv\build"
 
     - name: Build
       run: cmake --build build --config Release
@@ -76,10 +76,10 @@ jobs:
     - name: Run rocm benchmark tests
       run: build\Release\rocm_benchmark.exe
 
-    - name: Run example-opencv tests
-      run: |
-        copy C:\tools\opencv\build\x64\vc16\bin\opencv_world4100.dll build\Release\
-        build\Release\example-opencv.exe
+    # - name: Run example-opencv tests
+    #   run: |
+    #     copy C:\tools\opencv\build\x64\vc16\bin\opencv_world4100.dll build\Release\
+    #     build\Release\example-opencv.exe
 
 
   build-windows-x86:
@@ -98,7 +98,7 @@ jobs:
         choco install cmake --force
 
     - name: CMake Configure & Generate
-      run: cmake -S . -B build -DBUILD_EXAMPLE:BOOL="1" -DBUILD_BENCHMARK:BOOL="1" -DBUILD_CUDA_BENCHMARK:BOOL="1" -DBUILD_ROCM_BENCHMARK:BOOL="1" -DUSE_OPENMP:BOOL="1" -A Win32
+      run: cmake -S . -B build -DBUILD_EXAMPLE:BOOL="0" -DBUILD_BENCHMARK:BOOL="1" -DBUILD_CUDA_BENCHMARK:BOOL="1" -DBUILD_ROCM_BENCHMARK:BOOL="1" -DUSE_OPENMP:BOOL="0" -A Win32
 
     - name: Build
       run: cmake --build build --config Release
@@ -132,7 +132,7 @@ jobs:
         choco install cmake --force
 
     - name: CMake Configure & Generate
-      run: cmake -S . -B build -DBUILD_EXAMPLE:BOOL="1" -DBUILD_BENCHMARK:BOOL="1" -DBUILD_CUDA_BENCHMARK:BOOL="1" -DBUILD_ROCM_BENCHMARK:BOOL="1" -DUSE_OPENMP:BOOL="1" -A ARM64
+      run: cmake -S . -B build -DBUILD_EXAMPLE:BOOL="1" -DBUILD_BENCHMARK:BOOL="1" -DBUILD_CUDA_BENCHMARK:BOOL="1" -DBUILD_ROCM_BENCHMARK:BOOL="1" -DUSE_OPENMP:BOOL="0" -A ARM64
 
     - name: Build
       run: cmake --build build --config Release

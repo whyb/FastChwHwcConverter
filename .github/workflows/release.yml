@@ -23,11 +23,9 @@ jobs:
       run: |
         sudo apt-get update -y
         sudo apt-get install -y cmake
-        sudo apt-get install -y libomp-dev
-        sudo apt-get install -y libopencv-dev
 
     - name: CMake Configure & Generate(x64)
-      run: cmake -S . -B build-x64 -DCMAKE_CXX_FLAGS="-static-libgcc -static-libstdc++" -DBUILD_EXAMPLE:BOOL="1" -DBUILD_EXAMPLE_OPENCV:BOOL="1" -DBUILD_BENCHMARK:BOOL="1" -DBUILD_CUDA_BENCHMARK:BOOL="1" -DBUILD_ROCM_BENCHMARK:BOOL="1" -DUSE_OPENMP:BOOL="1"
+      run: cmake -S . -B build-x64 -DCMAKE_CXX_FLAGS="-static-libgcc -static-libstdc++" -DBUILD_EXAMPLE:BOOL="1" -DBUILD_EXAMPLE_OPENCV:BOOL="0" -DBUILD_BENCHMARK:BOOL="1" -DBUILD_CUDA_BENCHMARK:BOOL="1" -DBUILD_ROCM_BENCHMARK:BOOL="1" -DUSE_OPENMP:BOOL="0"
 
     - name: Build(x64)
       run: cmake --build build-x64 --config Release
@@ -36,7 +34,7 @@ jobs:
       run: ls ./build-x64/
 
     - name: Zip binary files
-      run: zip ./bin-linux-gcc-x64.zip ./build-x64/example ./build-x64/benchmark ./build-x64/cuda_benchmark ./build-x64/rocm_benchmark ./build-x64/example-opencv
+      run: zip ./bin-linux-gcc-x64.zip ./build-x64/example ./build-x64/benchmark ./build-x64/cuda_benchmark ./build-x64/rocm_benchmark
 
     - name: Archive Linux build artifacts
       uses: actions/upload-artifact@v4
@@ -58,11 +56,11 @@ jobs:
     - name: Install dependencies
       run: |
         choco install cmake --force
-        choco install opencv --version=4.10.0 --force
+        ::choco install opencv --version=4.10.0 --force
         choco install zip --force
     
     - name: CMake Configure & Generate(x64)
-      run: cmake -S . -B build-x64 -DBUILD_EXAMPLE:BOOL="1" -DBUILD_EXAMPLE_OPENCV:BOOL="1" -DBUILD_BENCHMARK:BOOL="1" -DBUILD_CUDA_BENCHMARK:BOOL="1" -DBUILD_ROCM_BENCHMARK:BOOL="1" -DUSE_OPENMP:BOOL="1" -DOpenCV_DIR:PATH="C:/tools/opencv/build" -A x64 
+      run: cmake -S . -B build-x64 -DBUILD_EXAMPLE:BOOL="1" -DBUILD_EXAMPLE_OPENCV:BOOL="0" -DBUILD_BENCHMARK:BOOL="1" -DBUILD_CUDA_BENCHMARK:BOOL="1" -DBUILD_ROCM_BENCHMARK:BOOL="1" -DUSE_OPENMP:BOOL="0" -DOpenCV_DIR:PATH="C:/tools/opencv/build" -A x64 
 
     - name: Build(x64)
       run: cmake --build build-x64 --config Release
@@ -73,7 +71,7 @@ jobs:
         curl -L -o ROCm_v6.2.4.zip https://github.com/whyb/FastChwHwcConverter/raw/ci-dependencies/ROCm_v6.2.4/ROCm_v6.2.4.zip
         tar -xf CUDA_v11.8.zip -C ./build-x64/Release/
         tar -xf ROCm_v6.2.4.zip -C ./build-x64/Release/
-        copy C:\tools\opencv\build\x64\vc16\bin\opencv_world4100.dll .\build-x64\Release\
+        ::copy C:\tools\opencv\build\x64\vc16\bin\opencv_world4100.dll .\build-x64\Release\
 
     - name: List build folder
       run: |
@@ -82,7 +80,7 @@ jobs:
 
     - name: Zip binary files (flat structure)
       run: |
-        zip ./bin-windows-msvc-x64.zip .\build-x64\Release\example.exe .\build-x64\Release\benchmark.exe  .\build-x64\Release\cuda_benchmark.exe .\build-x64\Release\rocm_benchmark.exe .\build-x64\Release\example-opencv.exe .\build-x64\Release\*.dll
+        zip ./bin-windows-msvc-x64.zip .\build-x64\Release\example.exe .\build-x64\Release\benchmark.exe .\build-x64\Release\cuda_benchmark.exe .\build-x64\Release\rocm_benchmark.exe .\build-x64\Release\*.dll
       
     - name: Archive Windows build artifacts
       uses: actions/upload-artifact@v4
@@ -108,7 +106,7 @@ jobs:
         choco install zip --force
     
     - name: CMake Configure & Generate(x86)
-      run: cmake -S . -B build-x86 -DBUILD_EXAMPLE:BOOL="1" -DBUILD_BENCHMARK:BOOL="1" -DBUILD_CUDA_BENCHMARK:BOOL="1" -DBUILD_ROCM_BENCHMARK:BOOL="1" -DUSE_OPENMP:BOOL="1" -A Win32
+      run: cmake -S . -B build-x86 -DBUILD_EXAMPLE:BOOL="1" -DBUILD_BENCHMARK:BOOL="1" -DBUILD_CUDA_BENCHMARK:BOOL="1" -DBUILD_ROCM_BENCHMARK:BOOL="1" -DUSE_OPENMP:BOOL="0" -A Win32
 
     - name: Build(x86)
       run: cmake --build build-x86 --config Release
@@ -146,7 +144,7 @@ jobs:
         choco install zip --force
     
     - name: CMake Configure & Generate(arm64)
-      run: cmake -S . -B build-arm64 -DBUILD_EXAMPLE:BOOL="1" -DBUILD_BENCHMARK:BOOL="1" -DBUILD_CUDA_BENCHMARK:BOOL="1" -DBUILD_ROCM_BENCHMARK:BOOL="1" -DUSE_OPENMP:BOOL="1" -A ARM64
+      run: cmake -S . -B build-arm64 -DBUILD_EXAMPLE:BOOL="1" -DBUILD_BENCHMARK:BOOL="1" -DBUILD_CUDA_BENCHMARK:BOOL="1" -DBUILD_ROCM_BENCHMARK:BOOL="1" -DUSE_OPENMP:BOOL="0" -A ARM64
 
     - name: Build(arm64)
       run: cmake --build build-arm64 --config Release
