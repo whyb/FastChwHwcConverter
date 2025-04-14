@@ -40,6 +40,7 @@
 #define STD_CLAMP(value, low, high) ((std::max)(low, (std::min)(value, high)))
 #endif
 
+#ifndef __APPLE__
 #if defined(__has_include)
 #  if __has_include(<execution>)
 #    include <execution>
@@ -57,6 +58,7 @@
 #include <tbb/parallel_for.h>
 #include <tbb/blocked_range.h>
 #endif
+#endif // __APPLE__
 
 namespace whyb {
     class cpu {

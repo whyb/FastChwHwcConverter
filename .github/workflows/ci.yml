@@ -64,6 +64,29 @@ jobs:
     - name: Run benchmark tests
       run: build/benchmark
 
+  build-macos-arm64:
+    runs-on: macos-latest
+    steps:
+    - name: Check out the repository
+      uses: actions/checkout@v4
+
+    - name: Install dependencies
+      run: |
+        brew update
+        brew install cmake
+
+    - name: CMake Configure & Generate (ARM64)
+      run: cmake -S . -B build-arm -DCMAKE_SYSTEM_PROCESSOR=arm64 -DBUILD_EXAMPLE:BOOL="1" -DBUILD_EXAMPLE_OPENCV:BOOL="0" -DBUILD_BENCHMARK:BOOL="1" -DBUILD_CUDA_BENCHMARK:BOOL="0" -DBUILD_ROCM_BENCHMARK:BOOL="0" -DUSE_OPENMP:BOOL="0"
+
+    - name: Build (ARM)
+      run: cmake --build build-arm --config Release
+
+    - name: Run example tests
+      run: build-arm/example
+
+    - name: Run benchmark tests
+      run: build-arm/benchmark
+
   build-windows-x64:
     runs-on: windows-latest
     steps:

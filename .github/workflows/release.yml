@@ -67,6 +67,31 @@ jobs:
         name: macos-x64-artifacts
         path: ./bin-macos-x64.zip
 
+  build-macos-arm64:
+    runs-on: macos-latest
+    steps:
+    - name: Check out the repository
+      uses: actions/checkout@v4
+
+    - name: Install dependencies
+      run: |
+        brew install cmake zip
+
+    - name: CMake Configure & Generate(arm64)
+      run: cmake -S . -B build-arm64 -DCMAKE_SYSTEM_PROCESSOR=arm64 -DBUILD_EXAMPLE:BOOL="1" -DBUILD_EXAMPLE_OPENCV:BOOL="0" -DBUILD_BENCHMARK:BOOL="1" -DBUILD_CUDA_BENCHMARK:BOOL="0" -DBUILD_ROCM_BENCHMARK:BOOL="0" -DUSE_OPENMP:BOOL="0"
+
+    - name: Build(arm64)
+      run: cmake --build build-arm64 --config Release
+
+    - name: Zip binary files
+      run: zip ./bin-macos-arm64.zip ./build-arm64/example ./build-arm64/benchmark
+
+    - name: Archive macOS ARM build artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: macos-arm64-artifacts
+        path: ./bin-macos-arm64.zip
+
   build-windows-x64:
     runs-on: windows-latest
     steps:
