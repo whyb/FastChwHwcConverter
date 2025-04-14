@@ -106,7 +106,6 @@ jobs:
     - name: Install dependencies
       run: |
         choco install cmake --force
-        ::choco install opencv --version=4.10.0 --force
         choco install zip --force
     
     - name: CMake Configure & Generate(x64)
@@ -121,7 +120,6 @@ jobs:
         curl -L -o ROCm_v6.2.4.zip https://github.com/whyb/FastChwHwcConverter/raw/ci-dependencies/ROCm_v6.2.4/ROCm_v6.2.4.zip
         tar -xf CUDA_v11.8.zip -C ./build-x64/Release/
         tar -xf ROCm_v6.2.4.zip -C ./build-x64/Release/
-        ::copy C:\tools\opencv\build\x64\vc16\bin\opencv_world4100.dll .\build-x64\Release\
 
     - name: List build folder
       run: |
