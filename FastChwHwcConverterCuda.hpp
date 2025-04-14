@@ -508,8 +508,8 @@ namespace whyb {
 
         static std::string findNVRTCModuleName()
         {
-            char currentDir[MAX_PATH] = { 0 };
 #ifdef _WIN32
+            char currentDir[MAX_PATH] = { 0 };
             if (GetModuleFileNameA(nullptr, currentDir, MAX_PATH) == 0)
             {
                 std::cerr << "Failed to get current directory on Windows." << std::endl;
@@ -523,6 +523,7 @@ namespace whyb {
                 executablePath = executablePath.substr(0, lastSlash);
             }
 #else
+            char currentDir[PATH_MAX] = { 0 };
             if (readlink("/proc/self/exe", currentDir, PATH_MAX) == -1)
             {
                 std::cerr << "Failed to get current directory on Linux." << std::endl;
