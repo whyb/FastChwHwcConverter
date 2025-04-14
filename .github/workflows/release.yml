@@ -42,7 +42,7 @@ jobs:
         name: linux-x64-artifacts
         path: ./bin-linux-gcc-x64.zip
 
-    build-linux-arm64:
+  build-linux-arm64:
     runs-on: ubuntu-latest
     steps:
     - name: Check out the repository
