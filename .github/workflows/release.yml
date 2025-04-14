@@ -42,6 +42,31 @@ jobs:
         name: linux-x64-artifacts
         path: ./bin-linux-gcc-x64.zip
 
+  build-macos-x64:
+    runs-on: macos-latest
+    steps:
+    - name: Check out the repository
+      uses: actions/checkout@v4
+
+    - name: Install dependencies
+      run: |
+        brew install cmake zip
+
+    - name: CMake Configure & Generate(x64)
+      run: cmake -S . -B build-x64 -DBUILD_EXAMPLE:BOOL="1" -DBUILD_EXAMPLE_OPENCV:BOOL="0" -DBUILD_BENCHMARK:BOOL="1" -DBUILD_CUDA_BENCHMARK:BOOL="0" -DBUILD_ROCM_BENCHMARK:BOOL="0" -DUSE_OPENMP:BOOL="0"
+
+    - name: Build(x64)
+      run: cmake --build build-x64 --config Release
+
+    - name: Zip binary files
+      run: zip ./bin-macos-x64.zip ./build-x64/example ./build-x64/benchmark
+
+    - name: Archive macOS build artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: macos-x64-artifacts
+        path: ./bin-macos-x64.zip
+
   build-windows-x64:
     runs-on: windows-latest
     steps:

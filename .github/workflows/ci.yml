@@ -41,6 +41,28 @@ jobs:
     # - name: Run example-opencv tests
     #   run: build/example-opencv
 
+  build-macos-x64:
+    runs-on: macos-latest
+    steps:
+    - name: Check out the repository
+      uses: actions/checkout@v4
+
+    - name: Install dependencies
+      run: |
+        brew update
+        brew install cmake
+
+    - name: CMake Configure & Generate
+      run: cmake -S . -B build -DBUILD_EXAMPLE:BOOL="1" -DBUILD_EXAMPLE_OPENCV:BOOL="0" -DBUILD_BENCHMARK:BOOL="1" -DBUILD_CUDA_BENCHMARK:BOOL="0" -DBUILD_ROCM_BENCHMARK:BOOL="0" -DUSE_OPENMP:BOOL="0"
+
+    - name: Build
+      run: cmake --build build --config Release
+
+    - name: Run example tests
+      run: build/example
+
+    - name: Run benchmark tests
+      run: build/benchmark
 
   build-windows-x64:
     runs-on: windows-latest
