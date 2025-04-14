@@ -98,7 +98,7 @@ jobs:
         choco install cmake --force
 
     - name: CMake Configure & Generate
-      run: cmake -S . -B build -DBUILD_EXAMPLE:BOOL="0" -DBUILD_BENCHMARK:BOOL="1" -DBUILD_CUDA_BENCHMARK:BOOL="1" -DBUILD_ROCM_BENCHMARK:BOOL="1" -DUSE_OPENMP:BOOL="0" -A Win32
+      run: cmake -S . -B build -DBUILD_EXAMPLE:BOOL="1" -DBUILD_BENCHMARK:BOOL="1" -DBUILD_CUDA_BENCHMARK:BOOL="1" -DBUILD_ROCM_BENCHMARK:BOOL="1" -DUSE_OPENMP:BOOL="0" -A Win32
 
     - name: Build
       run: cmake --build build --config Release
