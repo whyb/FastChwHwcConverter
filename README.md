@@ -2,17 +2,17 @@
 ![CI](https://github.com/whyb/FastChwHwcConverter/workflows/CI/badge.svg)
 
 ## Overview
-### Multi-Core CPU Implementation (OpenMP)
-FastChwHwcConverter.hpp is a high-performance, multi-threaded, header-only C++ library for converting image data formats between **HWC (Height, Width, Channels)** and **CHW (Channels, Height, Width)**. It leverages OpenMP for parallel processing, utilizing all CPU cores for maximum performance.
+### Multi-Core CPU Implementation (C++Thread OpenMP)
+FastChwHwcConverter.hpp is a high-performance, multi-threaded, header-only C++ library for converting image data formats between **HWC (Height, Width, Channels)** and **CHW (Channels, Height, Width)**. It leverages C++ STL Thread / OpenMP for parallel processing, utilizing all CPU cores for maximum performance.
 
-**Note**: If the compilation environment does not find OpenMP, or you set USE_OPENMP to OFF, it will be reduced to single-threaded conversion.
+**Note**: If the compilation environment does not find OpenMP, or you set USE_OPENMP to OFF, it will be use C++ thread mode.
 
 
 ### GPU Acceleration (NVIDIA CUDA)
 FastChwHwcConverterCuda.hpp is a high-performance, GPU-accelerated library for converting image data formats between **HWC** and **CHW**, supporting CUDA versions 10.0+ and above. It requires no installation of the CUDA SDK, header files, or static linking. The library dynamically loads CUDA libraries from the system path. It will automatically search for CUDA's dynamic link library from the system path and dynamically load the functions inside and use them.
 
 
-**Note**: If your operating environment does not support CUDA or does not meet the conditions for using CUDA acceleration, it will automatically fall back to the CPU (OpenMP) for processing.
+**Note**: If your operating environment does not support CUDA or does not meet the conditions for using CUDA acceleration, it will automatically fall back to the CPU (OpenMP/C++ Thread) for processing.
 The functions support passing in cuda device memory and host memory parameters.
 
 
@@ -28,7 +28,7 @@ Any similar type conversion code you find another project on GitHub will most li
 
 ## Table of Contents
 - [Overview](#overview)
-  - [Multi-Core CPU Implementation (OpenMP)](#multi-core-cpu-implementation-openmp)
+  - [Multi-Core CPU Implementation (C++Thread OpenMP)](#multi-core-cpu-implementation-cthread-openmp)
   - [GPU Acceleration (NVIDIA CUDA)](#gpu-acceleration-nvidia-cuda)
   - [GPU Acceleration (AMD ROCm)](#gpu-acceleration-amd-rocm)
 - [The difference between CHW and HWC](#the-difference-between-chw-and-hwc)
@@ -37,6 +37,9 @@ Any similar type conversion code you find another project on GitHub will most li
 - [Why Convert Between HWC and CHW Formats?](#why-convert-between-hwc-and-chw-formats)
 - [Features](#features)
 - [Installation](#installation)
+  - [for CPU (C++ Thread)](#for-cpu-c-thread)
+  - [for CPU (OpenMP)](#for-cpu-openmp)
+  - [for GPU (CUDA or ROCm)](#for-gpu-cuda-or-rocm)
 - [Requirements](#requirements)
 - [API Documents](#api-documents)
   - [HWC -> CHW (CPU)](#hwc-to-chw-conversion-cpu)
@@ -85,30 +88,57 @@ Mapping to the actual pixel positions:
 The conversion between HWC (Height-Width-Channel) and CHW (Channel-Height-Width) formats is crucial for optimizing image processing tasks. Different machine learning frameworks and libraries have varying data format preferences. For instance, many deep learning frameworks, such as PyTorch, prefer the CHW format, while libraries like OpenCV often use the HWC format. By converting between these formats, we ensure compatibility and efficient data handling, enabling seamless transitions between different processing pipelines and maximizing performance for specific tasks. This flexibility enhances the overall efficiency and effectiveness of image processing and machine learning workflows.
 
 ## Features
-- **High-Performance**: Utilizes OpenMP for parallel processing. Make full use of CPU multi-core features.
+- **High-Performance**: Utilizes C++ Thread / OpenMP for parallel processing. Make full use of CPU multi-core features.
 - **GPU Optimization**: Fully leverages NVIDIA CUDA and AMD ROCm technologies to harness the computational power of GPUs, accelerating performance for intensive workloads.
 - **Header-Only**: Include **ONLY** a single header file. Easy to integrate into your C/C++ project. [example](#example).
 - **Flexible**: Supports scaling, clamping, and normalization of image data, any data type.
 - **Lightweight & SDK-Free**: No dependency on any external SDKs like CUDA SDK or HIP SDK. The project requires no additional header files or static library linkage, making it clean and easy to deploy.
 
 ## Installation
-### for CPU (OpenMP)
+### for CPU (C++ Thread)
 Simply include the header file `FastChwHwcConverter.hpp` in your project:
 
-```cpp
-#include "FastChwHwcConverter.hpp"
+```shell
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DUSE_OPENMP=OFF -DUSE_TBB=OFF -DBUILD_BENCHMARK=ON -DBUILD_CUDA_BENCHMARK=OFF -DBUILD_ROCM_BENCHMARK=OFF -DBUILD_EXAMPLE=OFF -DBUILD_EXAMPLE_OPENCV=OFF
+
+cmake --build build --config Release
 ```
+
+### for CPU (OpenMP)
+
+ * Option 1:
+
+    ```shell
+    cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DUSE_OPENMP=ON -DUSE_TBB=OFF -DBUILD_BENCHMARK=ON -DBUILD_CUDA_BENCHMARK=OFF -DBUILD_ROCM_BENCHMARK=OFF -DBUILD_EXAMPLE=OFF -DBUILD_EXAMPLE_OPENCV=OFF
+
+    cmake --build build --config Release
+    ```
+ * Option 2:
+
+    Simply include the header file `FastChwHwcConverter.hpp` in your project:
+
 
 ### for GPU (CUDA or ROCm)
-Simply include the header file `FastChwHwcConverterCuda.hpp` or `FastChwHwcConverterRocm.hpp` in your project:
 
-```cpp
-#include "FastChwHwcConverterCuda.hpp"
-```
+ * Option 1:
 
-```cpp
-#include "FastChwHwcConverterROCm.hpp"
-```
+    ```shell
+    cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DUSE_OPENMP=OFF -DUSE_TBB=OFF -DBUILD_BENCHMARK=ON -DBUILD_CUDA_BENCHMARK=ON -DBUILD_ROCM_BENCHMARK=ON -DBUILD_EXAMPLE=ON -DBUILD_EXAMPLE_OPENCV=ON
+
+    cmake --build build --config Release
+    ```
+
+ * Option 2:
+
+    Simply include the header file `FastChwHwcConverterCuda.hpp` or `FastChwHwcConverterRocm.hpp` in your project:
+
+    ```cpp
+    #include "FastChwHwcConverterCuda.hpp"
+    ```
+
+    ```cpp
+    #include "FastChwHwcConverterROCm.hpp"
+    ```
 
 Usually you also need to copy the `nvrtc64_***_0.dll` `nvrtc-builtins64_***` (for Windows CUDA) or `hiprtc****.dll` `hiprtc-builtins****.dll` `amd_comgr_*.dll` `amd_comgr****.dll` (for Windows ROCm)  or `libnvrtc.so` (for Linux CUDA) or `libhiprtc.so` (for Linux ROCm) file in the CUDA/ROCm Runtime SDK to the executable program directory, or set CUDA/ROCm SDK HOME as a system environment variable.
 
@@ -380,7 +410,7 @@ The table below shows the benchmark performance timing for different image dimen
     GPU(CUDA): NVIDIA GeForce RTX 3060 Ti
     GPU(ROCm): AMD Radeon RX 6900 XT
 
-|             |    CPU  |    CPU   |CPU(OpenMP)|CPU(OpenMP)|   CUDA  |   CUDA  |   ROCm  |   ROCm  |
+|             |CPU(Single)|CPU(Single)|CPU(OpenMP)|CPU(OpenMP)|   CUDA  |   CUDA  |   ROCm  |   ROCm  |
 |-------------|---------|----------|-----------|-----------|---------|---------|---------|---------|
 |  W x H x C  | hwc2chw | chw2hwc  | hwc2chw   | chw2hwc   | hwc2chw | chw2hwc | hwc2chw | chw2hwc |
 | 426x240x1 | 0.097ms | 0.110ms  | 0.113ms   | 0.030ms   | 0.022ms | 0.019ms | 0.059ms | 0.053ms |
