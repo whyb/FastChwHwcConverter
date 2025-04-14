@@ -42,6 +42,32 @@ jobs:
         name: linux-x64-artifacts
         path: ./bin-linux-gcc-x64.zip
 
+    build-linux-arm64:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Check out the repository
+      uses: actions/checkout@v4
+
+    - name: Install dependencies
+      run: |
+        sudo apt-get update -y
+        sudo apt-get install -y cmake
+
+    - name: CMake Configure & Generate (ARM64)
+      run: cmake -S . -B build-arm64 -DCMAKE_SYSTEM_PROCESSOR=arm64 -DBUILD_EXAMPLE:BOOL="1" -DBUILD_EXAMPLE_OPENCV:BOOL="0" -DBUILD_BENCHMARK:BOOL="1" -DBUILD_CUDA_BENCHMARK:BOOL="1" -DBUILD_ROCM_BENCHMARK:BOOL="1" -DUSE_OPENMP:BOOL="0"
+
+    - name: Build (ARM64)
+      run: cmake --build build-arm64 --config Release
+
+    - name: Zip binary files
+      run: zip ./bin-linux-arm64.zip ./build-arm64/example ./build-arm64/benchmark ./build-arm64/cuda_benchmark ./build-arm64/rocm_benchmark
+
+    - name: Archive Linux ARM64 build artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: linux-arm64-artifacts
+        path: ./bin-linux-arm64.zip
+
   build-macos-x64:
     runs-on: macos-latest
     steps:
@@ -214,7 +240,7 @@ jobs:
           ./bin-windows-msvc-arm64.zip
 
   release:
-    needs: [build-linux-x64, build-windows-x64, build-windows-x86, build-windows-arm64]
+    needs: [build-linux-x64, build-linux-arm64, build-macos-x64, build-macos-arm64, build-windows-x64, build-windows-x86, build-windows-arm64]
     runs-on: ubuntu-latest
     steps:
     - name: Download all artifacts
