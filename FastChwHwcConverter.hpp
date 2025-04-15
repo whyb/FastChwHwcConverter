@@ -153,13 +153,12 @@ namespace whyb {
 #ifdef _OPENMP
             // openmp
             const size_t hw_stride = w * h;
-            const size_t num_threads = omp_get_max_threads();
-            const size_t chunk_size = hw_stride / num_threads;
+            const size_t chunk_size = hw_stride / get_num_threads();
 #pragma omp parallel
             {
                 const size_t thread_id = omp_get_thread_num();
                 const size_t start_idx = thread_id * chunk_size;
-                const size_t end_idx = (thread_id == num_threads - 1) ? hw_stride : (start_idx + chunk_size);
+                const size_t end_idx = (thread_id == get_num_threads() - 1) ? hw_stride : (start_idx + chunk_size);
                 size_t index = start_idx * c;
                 for (size_t s = start_idx; s < end_idx; ++s) {
                     size_t stride_index = s;
@@ -170,15 +169,14 @@ namespace whyb {
             }
 #else
             // c++ thread
-            static size_t thread_count = std::thread::hardware_concurrency();
             const size_t hw_stride = h * w;
-            const size_t chunk_size = hw_stride / thread_count;
+            const size_t chunk_size = hw_stride / get_num_threads();
 
             std::vector<std::thread> threads;
-            for (size_t thread_id = 0; thread_id < thread_count; ++thread_id) {
+            for (size_t thread_id = 0; thread_id < get_num_threads(); ++thread_id) {
                 threads.emplace_back([&, thread_id]() {
                     const size_t start_idx = thread_id * chunk_size;
-                    const size_t end_idx = (thread_id == thread_count - 1) ? hw_stride : (start_idx + chunk_size);
+                    const size_t end_idx = (thread_id == get_num_threads() - 1) ? hw_stride : (start_idx + chunk_size);
                     size_t index = start_idx * c;
                     for (size_t s = start_idx; s < end_idx; ++s) {
                         size_t stride_index = s;
@@ -247,13 +245,12 @@ namespace whyb {
 #ifdef _OPENMP
             // openmp
             const size_t hw_stride = w * h;
-            const size_t num_threads = omp_get_max_threads();
-            const size_t chunk_size = hw_stride / num_threads;
+            const size_t chunk_size = hw_stride / get_num_threads();
 #pragma omp parallel
             {
                 const size_t thread_id = omp_get_thread_num();
                 const size_t start_idx = thread_id * chunk_size;
-                const size_t end_idx = (thread_id == num_threads - 1) ? hw_stride : (start_idx + chunk_size);
+                const size_t end_idx = (thread_id == get_num_threads() - 1) ? hw_stride : (start_idx + chunk_size);
                 size_t index = start_idx * c;
                 for (size_t s = start_idx; s < end_idx; ++s) {
                     size_t stride_index = s;
@@ -264,15 +261,14 @@ namespace whyb {
             }
 #else
             // c++ thread
-            static size_t thread_count = std::thread::hardware_concurrency();
             const size_t hw_stride = h * w;
-            const size_t chunk_size = hw_stride / thread_count;
+            const size_t chunk_size = hw_stride / get_num_threads();
 
             std::vector<std::thread> threads;
-            for (size_t thread_id = 0; thread_id < thread_count; ++thread_id) {
+            for (size_t thread_id = 0; thread_id < get_num_threads(); ++thread_id) {
                 threads.emplace_back([&, thread_id]() {
                     const size_t start_idx = thread_id * chunk_size;
-                    const size_t end_idx = (thread_id == thread_count - 1) ? hw_stride : (start_idx + chunk_size);
+                    const size_t end_idx = (thread_id == get_num_threads() - 1) ? hw_stride : (start_idx + chunk_size);
                     size_t index = start_idx * c;
                     for (size_t s = start_idx; s < end_idx; ++s) {
                         size_t stride_index = s;
@@ -439,6 +435,15 @@ namespace whyb {
         inline static bool is_number_equal(const Type& a, const Type& b) {
             static Type epsilon = std::numeric_limits<Type>::epsilon();
             return std::abs(a - b) < epsilon;
+        }
+
+        inline static size_t get_num_threads() {
+#ifdef _OPENMP
+            static size_t num_threads = omp_get_max_threads();
+#else
+            static size_t num_threads = std::thread::hardware_concurrency();
+#endif
+            return num_threads;
         }
     };
 
