@@ -82,65 +82,71 @@ namespace whyb {
         *
         * @tparam Stype Source data type
         * @tparam Dtype Destination data type
+        * @tparam HasAlpha input alpha is requires participation in calculations
+        * @tparam NeedClamp input min_v and max_v is requires participation in calculations
+        * @tparam NeedNormalizedMeanStds input mean and stds is requires participation in calculations
         * @param h Height of image
         * @param w Width of image
         * @param c Number of channels
         * @param src Pointer to the source data in HWC format
         * @param dst Pointer to the destination data in CHW format
         * @param alpha Scaling factor
-        * @param clamp Whether to clamp the data values
         * @param min_v Minimum value for clamping
         * @param max_v Maximum value for clamping
-        * @param normalized_mean_stds Whether to use mean and standard deviation for normalization
         * @param mean Array of mean values for normalization
         * @param stds Array of standard deviation values for normalization
         */
-        template <typename Stype, typename Dtype>
+        template <typename Stype, typename Dtype,
+                  bool HasAlpha = false,
+                  bool NeedClamp = false,
+                  bool NeedNormalizedMeanStds = false>
         static void hwc2chw(
             const size_t h, const size_t w, const size_t c,
             const Stype* src, Dtype* dst,
             const Dtype alpha = 1,
-            const bool clamp = false, const Dtype min_v = 0.0, const Dtype max_v = 1.0,
-            const bool normalized_mean_stds = false,
+            const Dtype min_v = 0.0, const Dtype max_v = 1.0,
             const std::array<float, 3> mean = { 0.485, 0.456, 0.406 },
             const std::array<float, 3> stds = { 0.229, 0.224, 0.225 }) {
-            std::function<Dtype(const Stype&, const size_t&)> cvt_fun;
-            if (clamp) {
-                if (is_number_equal<Dtype>(alpha, 1)) {
-                    if (normalized_mean_stds) {
-                        cvt_fun = [&alpha, &min_v, &max_v, &mean, &stds](const Stype& src_val, const size_t& c) {return static_cast<Dtype>(std_clamp<Dtype>((src_val - mean[c]) / stds[c], min_v, max_v)); };
+            std::function<Dtype(const Stype&, const size_t&)> cvt_fun =
+                [&](const Stype& src_val, const size_t& c) {
+                if constexpr (NeedClamp) {
+                    if constexpr (HasAlpha) {
+                        if constexpr (NeedNormalizedMeanStds) {
+                            return static_cast<Dtype>(std_clamp<Dtype>((src_val * alpha - mean[c]) / stds[c], min_v, max_v));
+                        }
+                        else {
+                            return static_cast<Dtype>(std_clamp<Dtype>(src_val * alpha, min_v, max_v));
+                        }
                     }
                     else {
-                        cvt_fun = [&alpha, &min_v, &max_v](const Stype& src_val, const size_t& c) {return static_cast<Dtype>(std_clamp<Dtype>(src_val, min_v, max_v)); };
+                        if constexpr (NeedNormalizedMeanStds) {
+                            return static_cast<Dtype>(std_clamp<Dtype>((src_val - mean[c]) / stds[c], min_v, max_v));
+                        }
+                        else {
+                            return static_cast<Dtype>(std_clamp<Dtype>(src_val, min_v, max_v));
+                        }
                     }
                 }
                 else {
-                    if (normalized_mean_stds) {
-                        cvt_fun = [&alpha, &min_v, &max_v, &mean, &stds](const Stype& src_val, const size_t& c) {return static_cast<Dtype>(std_clamp<Dtype>((src_val * alpha - mean[c]) / stds[c], min_v, max_v)); };
+                    if constexpr (HasAlpha) {
+                        if constexpr (NeedNormalizedMeanStds) {
+                            return static_cast<Dtype>((src_val * alpha - mean[c]) / stds[c]);
+                        }
+                        else {
+                            return static_cast<Dtype>(src_val * alpha);
+                        }
                     }
                     else {
-                        cvt_fun = [&alpha, &min_v, &max_v](const Stype& src_val, const size_t& c) {return static_cast<Dtype>(std_clamp<Dtype>(src_val * alpha, min_v, max_v)); };
+                        if constexpr (NeedNormalizedMeanStds) {
+                            return static_cast<Dtype>((src_val - mean[c]) / stds[c]);
+                        }
+                        else {
+                            return static_cast<Dtype>(src_val);
+                        }
                     }
                 }
-            }
-            else {
-                if (is_number_equal<Dtype>(alpha, 1)) {
-                    if (normalized_mean_stds) {
-                        cvt_fun = [&alpha, &mean, &stds](const Stype& src_val, const size_t& c) {return static_cast<Dtype>((src_val - mean[c]) / stds[c]); };
-                    }
-                    else {
-                        cvt_fun = [&alpha](const Stype& src_val, const size_t& c) {return static_cast<Dtype>(src_val); };
-                    }
-                }
-                else {
-                    if (normalized_mean_stds) {
-                        cvt_fun = [&alpha, &mean, &stds](const Stype& src_val, const size_t& c) {return static_cast<Dtype>((src_val * alpha - mean[c]) / stds[c]); };
-                    }
-                    else {
-                        cvt_fun = [&alpha](const Stype& src_val, const size_t& c) {return static_cast<Dtype>(src_val * alpha); };
-                    }
-                }
-            }
+            };
+
 #ifdef SINGLE_THREAD
             size_t index = 0UL;
             const size_t hw_stride = w * h;
@@ -201,39 +207,45 @@ namespace whyb {
         *
         * @tparam Stype Source data type
         * @tparam Dtype Destination data type
+        * @tparam HasAlpha input alpha is valid
+        * @tparam NeedClamp input min_v and max_v is valid
         * @param c Number of channels
         * @param h Height of image
         * @param w Width of image
         * @param src Pointer to the source data in CHW format
         * @param dst Pointer to the destination data in HWC format
         * @param alpha Scaling factor
-        * @param clamp Whether to clamp the data values
         * @param min_v Minimum value for clamping
         * @param max_v Maximum value for clamping
         */
-        template <typename Stype, typename Dtype>
+        template <typename Stype, typename Dtype,
+                  bool HasAlpha = false,
+                  bool NeedClamp = false>
         static void chw2hwc(
             const size_t c, const size_t h, const size_t w,
             const Stype* src, Dtype* dst,
             const Dtype alpha = 1,
-            const bool clamp = false, const Dtype min_v = 0, const Dtype max_v = 255) {
-            std::function<Dtype(const Stype&, const size_t&)> cvt_fun;
-            if (clamp) {
-                if (is_number_equal<Dtype>(alpha, 1)) {
-                    cvt_fun = [&alpha, &min_v, &max_v](const Stype& src_val, const size_t& c) {return static_cast<Dtype>(std_clamp<Dtype>(src_val * alpha, min_v, max_v)); };
+            const Dtype min_v = 0, const Dtype max_v = 255) {
+            std::function<Dtype(const Stype&, const size_t&)> cvt_fun =
+                [&](const Stype& src_val, const size_t& c) {
+                if constexpr (NeedClamp) {
+                    if constexpr (HasAlpha) {
+                        return static_cast<Dtype>(std_clamp<Dtype>(src_val * alpha, min_v, max_v));
+                    }
+                    else {
+                        return static_cast<Dtype>(std_clamp<Dtype>(src_val, min_v, max_v));
+                    }
                 }
                 else {
-                    cvt_fun = [&alpha, &min_v, &max_v](const Stype& src_val, const size_t& c) {return static_cast<Dtype>(std_clamp<Dtype>(src_val, min_v, max_v)); };
+                    if constexpr (HasAlpha) {
+                        return static_cast<Dtype>(src_val * alpha);
+                    }
+                    else {
+                        return static_cast<Dtype>(src_val);
+                    }
                 }
-            }
-            else {
-                if (is_number_equal<Dtype>(alpha, 1)) {
-                    cvt_fun = [&alpha](const Stype& src_val, const size_t& c) {return static_cast<Dtype>(src_val); };
-                }
-                else {
-                    cvt_fun = [&alpha](const Stype& src_val, const size_t& c) {return static_cast<Dtype>(src_val * alpha); };
-                }
-            }
+            };
+
 #ifdef SINGLE_THREAD
             size_t index = 0UL;
             const size_t hw_stride = w * h;

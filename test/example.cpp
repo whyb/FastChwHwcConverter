@@ -22,13 +22,13 @@ void cpu_example()
     // step 2. Load image data to src_uint8(8U3C)
 
     // step 3. Convert HWC(Height, Width, Channels) to CHW(Channels, Height, Width)
-    whyb::cpu::hwc2chw<uint8_t, float>(h, w, c, (uint8_t*)src_uint8.data(), (float*)src_float.data(), 1.f/255.f);
+    whyb::cpu::hwc2chw<uint8_t, float, true>(h, w, c, (uint8_t*)src_uint8.data(), (float*)src_float.data(), 1.f/255.f);
 
     // step 4. Do AI inference
     // input: src_float ==infer==> output: out_float
 
     // step 5. Convert CHW(Channels, Height, Width) to HWC(Height, Width, Channels)
-    whyb::cpu::chw2hwc<float, uint8_t>(c, h, w, (float*)out_float.data(), (uint8_t*)out_uint8.data(), 255.f);
+    whyb::cpu::chw2hwc<float, uint8_t, true>(c, h, w, (float*)out_float.data(), (uint8_t*)out_uint8.data(), 255.f);
 
     std::cout << "cpu example done" << std::endl;
 }

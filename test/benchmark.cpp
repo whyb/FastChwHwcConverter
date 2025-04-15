@@ -40,14 +40,14 @@ int main() {
 
             auto startTime = std::chrono::high_resolution_clock::now();
             for (size_t i = 0; i < TEST_COUNT; ++i) {
-                whyb::cpu::hwc2chw<uint8_t, float>(height, width, channel, (uint8_t*)src_uint8.data(), (float*)src_float.data(), 1.0f/255.0f);
+                whyb::cpu::hwc2chw<uint8_t, float, true>(height, width, channel, (uint8_t*)src_uint8.data(), (float*)src_float.data(), 1.0f/255.0f);
             }
             auto endTime = std::chrono::high_resolution_clock::now();
             auto hwc2chwDuration = std::chrono::duration_cast<std::chrono::microseconds>(endTime - startTime) / double(TEST_COUNT);
 
             startTime = std::chrono::high_resolution_clock::now();
             for (size_t i = 0; i < TEST_COUNT; ++i) {
-                whyb::cpu::chw2hwc<float, uint8_t>(channel, height, width, (float*)out_float.data(), (uint8_t*)out_uint8.data(), 255.0f);
+                whyb::cpu::chw2hwc<float, uint8_t, true>(channel, height, width, (float*)out_float.data(), (uint8_t*)out_uint8.data(), 255.0f);
             }
             endTime = std::chrono::high_resolution_clock::now();
             auto chw2hwcDuration = std::chrono::duration_cast<std::chrono::microseconds>(endTime - startTime) / double(TEST_COUNT);
