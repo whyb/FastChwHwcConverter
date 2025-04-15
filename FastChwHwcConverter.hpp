@@ -26,6 +26,7 @@
 #include <limits>
 #include <vector>
 #include <thread>
+#include <future>
 
 #ifdef _OPENMP
 #include <omp.h>
@@ -172,9 +173,9 @@ namespace whyb {
             const size_t hw_stride = h * w;
             const size_t chunk_size = hw_stride / get_num_threads();
 
-            std::vector<std::thread> threads;
+            std::vector<std::future<void>> tasks;
             for (size_t thread_id = 0; thread_id < get_num_threads(); ++thread_id) {
-                threads.emplace_back([&, thread_id]() {
+                tasks.emplace_back(std::async(std::launch::async, [&, thread_id]() {
                     const size_t start_idx = thread_id * chunk_size;
                     const size_t end_idx = (thread_id == get_num_threads() - 1) ? hw_stride : (start_idx + chunk_size);
                     size_t index = start_idx * c;
@@ -184,10 +185,11 @@ namespace whyb {
                             dst[stride_index] = cvt_fun(src[index++], c1);
                         }
                     }
-                });
+                }));
             }
-            for (auto& thread : threads) {
-                thread.join();
+
+            for (auto& task : tasks) {
+                task.get();
             }
 #endif
 #endif
@@ -264,9 +266,9 @@ namespace whyb {
             const size_t hw_stride = h * w;
             const size_t chunk_size = hw_stride / get_num_threads();
 
-            std::vector<std::thread> threads;
+            std::vector<std::future<void>> tasks;
             for (size_t thread_id = 0; thread_id < get_num_threads(); ++thread_id) {
-                threads.emplace_back([&, thread_id]() {
+                tasks.emplace_back(std::async(std::launch::async, [&, thread_id]() {
                     const size_t start_idx = thread_id * chunk_size;
                     const size_t end_idx = (thread_id == get_num_threads() - 1) ? hw_stride : (start_idx + chunk_size);
                     size_t index = start_idx * c;
@@ -276,10 +278,11 @@ namespace whyb {
                             dst[index++] = cvt_fun(src[stride_index], c1);
                         }
                     }
-                });
+                }));
             }
-            for (auto& thread : threads) {
-                thread.join();
+
+            for (auto& task : tasks) {
+                task.get();
             }
 #endif
 #endif
