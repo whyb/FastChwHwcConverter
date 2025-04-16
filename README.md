@@ -2,8 +2,8 @@
 ![CI](https://github.com/whyb/FastChwHwcConverter/workflows/CI/badge.svg)
 
 ## Overview
-### Multi-Core CPU Implementation (C++Thread OpenMP)
-FastChwHwcConverter.hpp is a high-performance, multi-threaded, header-only C++ library for converting image data formats between **HWC (Height, Width, Channels)** and **CHW (Channels, Height, Width)**. It leverages C++ STL Thread / OpenMP for parallel processing, utilizing all CPU cores for maximum performance.
+### Multi-Core CPU Implementation (C++Thread OpenMP oneTBB)
+FastChwHwcConverter.hpp is a high-performance, multi-threaded, header-only C++ library for converting image data formats between **HWC (Height, Width, Channels)** and **CHW (Channels, Height, Width)**. It leverages `C++ STL Thread` / `OpenMP` / `Intel oneTBB` for parallel processing, utilizing all CPU cores for maximum performance.
 
 **Note**: If the compilation environment does not find OpenMP, or you set USE_OPENMP to OFF, it will be use C++ thread mode.
 
@@ -28,7 +28,7 @@ Any similar type conversion code you find another project on GitHub will most li
 
 ## Table of Contents
 - [Overview](#overview)
-  - [Multi-Core CPU Implementation (C++Thread OpenMP)](#multi-core-cpu-implementation-cthread-openmp)
+  - [Multi-Core CPU Implementation (C++Thread OpenMP oneTBB)](#multi-core-cpu-implementation-cthread-openmp-onetbb)
   - [GPU Acceleration (NVIDIA CUDA)](#gpu-acceleration-nvidia-cuda)
   - [GPU Acceleration (AMD ROCm)](#gpu-acceleration-amd-rocm)
 - [The difference between CHW and HWC](#the-difference-between-chw-and-hwc)
@@ -39,6 +39,7 @@ Any similar type conversion code you find another project on GitHub will most li
 - [Installation](#installation)
   - [for CPU (C++ Thread)](#for-cpu-c-thread)
   - [for CPU (OpenMP)](#for-cpu-openmp)
+  - [for CPU (oneTBB)](#for-cpu-onetbb)
   - [for GPU (CUDA or ROCm)](#for-gpu-cuda-or-rocm)
 - [Requirements](#requirements)
 - [API Documents](#api-documents)
@@ -105,6 +106,8 @@ cmake --build build --config Release
 ```
 
 ### for CPU (OpenMP)
+OpenMP is an API that supports multi-platform shared-memory multiprocessing programming. on many platforms, instruction-set architectures and operating systems. OpenMP uses a portable, scalable model that gives programmers a simple and flexible interface for developing parallel applications for platforms ranging from the standard desktop computer to the supercomputer.
+[see more](https://www.openmp.org).
 
  * Option 1:
 
@@ -117,9 +120,26 @@ cmake --build build --config Release
 
     Simply include the header file `FastChwHwcConverter.hpp` in your project:
 
+### for CPU (oneTBB)
+Intel oneTBB (Intel® oneAPI Threading Building Blocks) is a simplify parallelism with this advanced threading and memory-management template library. This component is part of the Intel® oneAPI Base Toolkit. [see more](https://www.intel.com/content/www/us/en/developer/tools/oneapi/onetbb-download.html).
+
+ * Option 1:
+
+    ```shell
+    cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DUSE_OPENMP=OFF -DUSE_TBB=ON -DTBB_DIR=D:/extlibs/oneAPI/tbb/2021.13/lib/cmake/tbb -DBUILD_BENCHMARK=ON -DBUILD_CUDA_BENCHMARK=OFF -DBUILD_ROCM_BENCHMARK=OFF -DBUILD_EXAMPLE=OFF -DBUILD_EXAMPLE_OPENCV=OFF
+
+    cmake --build build --config Release
+    ```
+ * Option 2:
+
+    Simply include the header file `FastChwHwcConverter.hpp` in your project:
+
 
 ### for GPU (CUDA or ROCm)
 
+[NVIDIA CUDA Official Website](https://developer.nvidia.com/cuda-toolkit)
+
+[AMD ROCm Official Website](https://www.amd.com/en/products/software/rocm.html)
  * Option 1:
 
     ```shell
@@ -323,13 +343,13 @@ void cpu_example()
     // step 2. Load image data to src_uint8(8U3C)
 
     // step 3. Convert HWC(Height, Width, Channels) to CHW(Channels, Height, Width)
-    whyb::cpu::hwc2chw<uint8_t, float>(h, w, c, (uint8_t*)src_uint8.data(), (float*)src_float.data(), 1.f/255.f);
+    whyb::cpu::hwc2chw<uint8_t, float, true>(h, w, c, (uint8_t*)src_uint8.data(), (float*)src_float.data(), 1.f/255.f);
 
     // step 4. Do AI inference
     // input: src_float ==infer==> output: out_float
 
     // step 5. Convert CHW(Channels, Height, Width) to HWC(Height, Width, Channels)
-    whyb::cpu::chw2hwc<float, uint8_t>(c, h, w, (float*)out_float.data(), (uint8_t*)out_uint8.data(), 255.f);
+    whyb::cpu::chw2hwc<float, uint8_t, true>(c, h, w, (float*)out_float.data(), (uint8_t*)out_uint8.data(), 255.f);
 
     std::cout << "cpu example done" << std::endl;
 }
