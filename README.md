@@ -145,8 +145,9 @@ Usually you also need to copy the `nvrtc64_***_0.dll` `nvrtc-builtins64_***` (fo
 In addition, you need to download and install the latest version of the driver from the [NVIDIA drivers website](https://www.nvidia.com/Download/index.aspx) or [AMD drivers website](https://www.amd.com/en/support). Because this project will dynamically load driver file: `nvcuda.dll` (for Windows CUDA) or `amdhip64_6.dll` (for Windows ROCm) or `libcuda.so` (for Linux CUDA) or `libamdhip64.so` (for Linux ROCm).
 
 ## Requirements
-* C++11 or later
+* C++17 or later
 * OpenMP support (optional, set USE_OPENMP to ON for high performance)
+* oneTBB support (optional, set USE_TBB to ON for Intel oneTBB's high performance)
 * CMake v3.10 or later (optional)
 * OpenCV v4.0 or later (optional, if BUILD_EXAMPLE_OPENCV is ON)
 * CUDA 11.2+ driver (optional, if you want to use CUDA acceleration, And NVIDIA GPU's compute capability > 3.5, more details see [here](https://developer.nvidia.com/cuda-gpus). )
@@ -157,13 +158,15 @@ In addition, you need to download and install the latest version of the driver f
 ### HWC to CHW Conversion (CPU)
 The `whyb::cpu::hwc2chw()` function converts image data from HWC format to CHW format.
 ```cpp
-template <typename Stype, typename Dtype>
+template <typename Stype, typename Dtype,
+            bool HasAlpha = false,
+            bool NeedClamp = false,
+            bool NeedNormalizedMeanStds = false>
 void hwc2chw(
     const size_t h, const size_t w, const size_t c,
     const Stype* src, Dtype* dst,
     const Dtype alpha = 1, 
-    const bool clamp = false, const Dtype min_v = 0.0, const Dtype max_v = 1.0,
-    const bool normalized_mean_stds = false,
+    const Dtype min_v = 0.0, const Dtype max_v = 1.0,
     const std::array<float, 3> mean = { 0.485, 0.456, 0.406 },
     const std::array<float, 3> stds = { 0.229, 0.224, 0.225 }
 );
@@ -177,10 +180,8 @@ Parameters:
 * `src`: Pointer to the source data in HWC format.
 * `dst`: Pointer to the destination data in CHW format.
 * `alpha`: Scaling factor (default is 1).
-* `clamp`: Whether to clamp the data values (default is false).
 * `min_v`: Minimum value for clamping (default is 0.0).
 * `max_v`: Maximum value for clamping (default is 1.0).
-* `normalized_mean_stds`: Whether to use mean and standard deviation for normalization (default is false).
 * `mean`: Array of mean values for normalization (default is {0.485, 0.456, 0.406}).
 * `stds`: Array of standard deviation values for normalization (default is {0.229, 0.224, 0.225}).
 
@@ -188,12 +189,14 @@ Parameters:
 The `whyb::cpu::chw2hwc()` function converts image data from CHW format to HWC format.
 
 ```cpp
-template <typename Stype, typename Dtype>
+template <typename Stype, typename Dtype,
+            bool HasAlpha = false,
+            bool NeedClamp = false>
 void chw2hwc(
     const size_t c, const size_t h, const size_t w,
     const Stype* src, Dtype* dst, 
     const Dtype alpha = 1, 
-    const bool clamp = false, const Dtype min_v = 0, const Dtype max_v = 255
+    const Dtype min_v = 0, const Dtype max_v = 255
 );
 ```
 Parameters:
@@ -204,7 +207,6 @@ Parameters:
 * `src`: Pointer to the source data in CHW format.
 * `dst`: Pointer to the destination data in HWC format.
 * `alpha`: Scaling factor (default is 1).
-* `clamp`: Whether to clamp the data values (default is false).
 * `min_v`: Minimum value for clamping (default is 0).
 * `max_v`: Maximum value for clamping (default is 255).
 

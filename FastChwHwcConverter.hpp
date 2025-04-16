@@ -28,7 +28,7 @@
 #include <thread>
 #include <future>
 
-#ifdef _OPENMP
+#ifdef USE_OPENMP
 #include <omp.h>
 #endif
 
@@ -57,7 +57,7 @@
 #ifdef USE_TBB
 #include <tbb/tbb.h>
 #include <tbb/parallel_for.h>
-#include <tbb/blocked_range.h>
+#include <tbb/task_arena.h>
 #endif
 #endif // __APPLE__
 
@@ -83,8 +83,8 @@ namespace whyb {
         * @tparam Stype Source data type
         * @tparam Dtype Destination data type
         * @tparam HasAlpha input alpha is requires participation in calculations
-        * @tparam NeedClamp input min_v and max_v is requires participation in calculations
-        * @tparam NeedNormalizedMeanStds input mean and stds is requires participation in calculations
+        * @tparam NeedClamp input min_v and max_v are requires participation in calculations
+        * @tparam NeedNormalizedMeanStds input mean and stds are requires participation in calculations
         * @param h Height of image
         * @param w Width of image
         * @param c Number of channels
@@ -157,7 +157,7 @@ namespace whyb {
                 }
             }
 #else
-#ifdef _OPENMP
+#ifdef USE_OPENMP
             // openmp
             const size_t hw_stride = w * h;
             const size_t chunk_size = hw_stride / get_num_threads();
@@ -174,6 +174,21 @@ namespace whyb {
                     }
                 }
             }
+#elif defined(USE_TBB)
+            // Intel oneTBB
+            const size_t hw_stride = h * w;
+            const size_t chunk_size = hw_stride / get_num_threads();
+
+            tbb::parallel_for(tbb::blocked_range<size_t>(0, hw_stride, chunk_size),
+                [&](const tbb::blocked_range<size_t>& range) {
+                size_t index = range.begin() * c;
+                for (size_t s = range.begin(); s < range.end(); ++s) {
+                    size_t stride_index = s;
+                    for (size_t c1 = 0UL; c1 < c; ++c1, stride_index += hw_stride) {
+                        dst[stride_index] = cvt_fun(src[index++], c1);
+                    }
+                }
+            });
 #else
             // c++ thread
             const size_t hw_stride = h * w;
@@ -207,8 +222,8 @@ namespace whyb {
         *
         * @tparam Stype Source data type
         * @tparam Dtype Destination data type
-        * @tparam HasAlpha input alpha is valid
-        * @tparam NeedClamp input min_v and max_v is valid
+        * @tparam HasAlpha input alpha is requires participation in calculations
+        * @tparam NeedClamp input min_v and max_v are requires participation in calculations
         * @param c Number of channels
         * @param h Height of image
         * @param w Width of image
@@ -256,7 +271,7 @@ namespace whyb {
                 }
             }
 #else
-#ifdef _OPENMP
+#ifdef USE_OPENMP
             // openmp
             const size_t hw_stride = w * h;
             const size_t chunk_size = hw_stride / get_num_threads();
@@ -273,6 +288,21 @@ namespace whyb {
                     }
                 }
             }
+#elif defined(USE_TBB)
+            // Intel oneTBB
+            const size_t hw_stride = h * w;
+            const size_t chunk_size = hw_stride / get_num_threads();
+
+            tbb::parallel_for(tbb::blocked_range<size_t>(0, hw_stride, chunk_size), 
+                [&](const tbb::blocked_range<size_t>& range) {
+                size_t index = range.begin() * c;
+                for (size_t s = range.begin(); s < range.end(); ++s) {
+                    size_t stride_index = s;
+                    for (size_t c1 = 0UL; c1 < c; ++c1, stride_index += hw_stride) {
+                        dst[index++] = cvt_fun(src[stride_index], c1);
+                    }
+                }
+            });
 #else
             // c++ thread
             const size_t hw_stride = h * w;
@@ -453,7 +483,7 @@ namespace whyb {
         }
 
         inline static size_t get_num_threads() {
-#ifdef _OPENMP
+#ifdef USE_OPENMP
             static size_t num_threads = omp_get_max_threads();
 #else
             static size_t num_threads = std::thread::hardware_concurrency();
