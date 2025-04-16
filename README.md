@@ -118,7 +118,7 @@ OpenMP is an API that supports multi-platform shared-memory multiprocessing prog
     ```
  * Option 2:
 
-    Simply include the header file `FastChwHwcConverter.hpp` in your project:
+    Simply include the header file `FastChwHwcConverter.hpp` in your project. Before include, you need to add a macro `#define USE_OPENMP 1`.
 
 ### for CPU (oneTBB)
 Intel oneTBB (Intel® oneAPI Threading Building Blocks) is a simplify parallelism with this advanced threading and memory-management template library. This component is part of the Intel® oneAPI Base Toolkit. [see more](https://www.intel.com/content/www/us/en/developer/tools/oneapi/onetbb-download.html).
@@ -132,7 +132,7 @@ Intel oneTBB (Intel® oneAPI Threading Building Blocks) is a simplify parallelis
     ```
  * Option 2:
 
-    Simply include the header file `FastChwHwcConverter.hpp` in your project:
+    Simply include the header file `FastChwHwcConverter.hpp` in your project. Before include, you need to add a macro `#define USE_TBB 1`.
 
 
 ### for GPU (CUDA or ROCm)
