@@ -161,13 +161,6 @@ static hipEventSynchronize_t hipEventSynchronize = nullptr;
 static hipEventElapsedTime_t hipEventElapsedTime = nullptr;
 static hipEventDestroy_t hipEventDestroy = nullptr;
 
-enum struct InitROCmStatusEnum : int
-{
-    Ready = 0,
-    Inited = 1,
-    Failed = 2,
-};
-
 
 static const char* rocmSource = R"(
 typedef unsigned char uint8_t;
@@ -203,6 +196,12 @@ extern "C" __global__ void rocm_chw2hwc(const size_t c, const size_t h, const si
 )";
 
 namespace whyb {
+    enum struct InitROCmStatusEnum : int
+    {
+        Ready = 0,
+        Inited = 1,
+        Failed = 2,
+    };
     class amd {
     private:
         amd() {

@@ -163,14 +163,13 @@ static const char* cudaSource = R"(
 
 )";
 
-enum struct InitCUDAStatusEnum : int
-{
-    Ready = 0,
-    Inited = 1,
-    Failed = 2,
-};
-
 namespace whyb {
+    enum struct InitCUDAStatusEnum : int
+    {
+        Ready = 0,
+        Inited = 1,
+        Failed = 2,
+    };
     class nvidia {
     private:
         nvidia() {
