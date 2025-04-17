@@ -105,8 +105,8 @@ namespace whyb {
             const Stype* src, Dtype* dst,
             const Dtype alpha = 1,
             const Dtype min_v = 0.0, const Dtype max_v = 1.0,
-            const std::array<float, 3> mean = { 0.485, 0.456, 0.406 },
-            const std::array<float, 3> stds = { 0.229, 0.224, 0.225 }) {
+            const std::array<float, 3> mean = { 0.485f, 0.456f, 0.406f },
+            const std::array<float, 3> stds = { 0.229f, 0.224f, 0.225f }) {
             std::function<Dtype(const Stype&, const size_t&)> cvt_fun =
                 [&](const Stype& src_val, const size_t& c) {
                 if constexpr (NeedClamp) {
