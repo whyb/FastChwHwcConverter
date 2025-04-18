@@ -32,14 +32,6 @@
 #include <omp.h>
 #endif
 
-// Check if the compiler supports C++17
-#if __cplusplus >= 201703L
-// If C++17 is supported, use std::clamp from the standard library
-#define STD_CLAMP(value, low, high) (std::clamp)(value, low, high)
-#else
-// If C++17 is not supported but C++11 is, implement std::clamp using std::min and std::max
-#define STD_CLAMP(value, low, high) ((std::max)(low, (std::min)(value, high)))
-#endif
 
 #ifndef __APPLE__
 #if defined(__has_include)
@@ -464,7 +456,14 @@ namespace whyb {
     private:
         template <typename T>
         inline static T std_clamp(const T& value, const T& low, const T& high) {
-            return STD_CLAMP(value, low, high);
+            // Check if the compiler supports C++17
+#if __cplusplus >= 201703L
+// If C++17 is supported, use std::clamp from the standard library
+            return (std::clamp)(value, low, high)
+#else
+// If C++17 is not supported but C++11 is, implement std::clamp using std::min and std::max
+            return ((std::max)(low, (std::min)(value, high)))
+#endif
         }
 
         /**
