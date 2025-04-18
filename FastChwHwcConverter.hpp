@@ -29,7 +29,11 @@
 #include <future>
 
 #ifdef USE_OPENMP
+#ifdef USE_SIMPLEOMP
+#include <simpleomp.h>
+#else
 #include <omp.h>
+#endif
 #endif
 
 // Check if the compiler supports C++17
