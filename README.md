@@ -167,7 +167,7 @@ In addition, you need to download and install the latest version of the driver f
 ## Requirements
 * C++17 or later
 * OpenMP support (optional, set USE_OPENMP to ON for high performance)
-* oneTBB support (optional, set USE_TBB to ON for Intel oneTBB's high performance)
+* oneTBB support (optional, set USE_TBB to ON and set valid TBB_LIBS for Intel oneTBB's high performance)
 * CMake v3.10 or later (optional)
 * OpenCV v4.0 or later (optional, if BUILD_EXAMPLE_OPENCV is ON)
 * CUDA 11.2+ driver (optional, if you want to use CUDA acceleration, And NVIDIA GPU's compute capability > 3.5, more details see [here](https://developer.nvidia.com/cuda-gpus). )
