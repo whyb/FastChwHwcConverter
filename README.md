@@ -2,7 +2,7 @@
 ![CI](https://github.com/whyb/FastChwHwcConverter/workflows/CI/badge.svg)
 
 ## Overview
-### Multi-Core CPU Implementation (C++Thread OpenMP oneTBB)
+### Multi-Core CPU Implementation (C++Thread-OpenMP-oneTBB)
 FastChwHwcConverter.hpp is a high-performance, multi-threaded, header-only C++ library for converting image data formats between **HWC (Height, Width, Channels)** and **CHW (Channels, Height, Width)**. It leverages `C++ STL Thread` / `OpenMP` / `Intel oneTBB` for parallel processing, utilizing all CPU cores for maximum performance.
 
 **Note**: If the compilation environment does not find OpenMP, or you set USE_OPENMP to OFF, it will be use C++ thread mode.
@@ -28,7 +28,7 @@ Any similar type conversion code you find another project on GitHub will most li
 
 ## Table of Contents
 - [Overview](#overview)
-  - [Multi-Core CPU Implementation (C++Thread OpenMP oneTBB)](#multi-core-cpu-implementation-cthread-openmp-onetbb)
+  - [Multi-Core CPU Implementation (C++Thread-OpenMP-oneTBB)](#multi-core-cpu-implementation-cthread-openmp-onetbb)
   - [GPU Acceleration (NVIDIA CUDA)](#gpu-acceleration-nvidia-cuda)
   - [GPU Acceleration (AMD ROCm)](#gpu-acceleration-amd-rocm)
 - [The difference between CHW and HWC](#the-difference-between-chw-and-hwc)

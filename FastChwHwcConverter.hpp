@@ -459,10 +459,10 @@ namespace whyb {
             // Check if the compiler supports C++17
 #if __cplusplus >= 201703L
 // If C++17 is supported, use std::clamp from the standard library
-            return (std::clamp)(value, low, high)
+            return (std::clamp)(value, low, high);
 #else
 // If C++17 is not supported but C++11 is, implement std::clamp using std::min and std::max
-            return ((std::max)(low, (std::min)(value, high)))
+            return ((std::max)(low, (std::min)(value, high)));
 #endif
         }
 
