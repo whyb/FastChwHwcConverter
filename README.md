@@ -12,7 +12,7 @@ FastChwHwcConverter.hpp is a high-performance, multi-threaded, header-only C++ l
 FastChwHwcConverterCuda.hpp is a high-performance, GPU-accelerated library for converting image data formats between **HWC** and **CHW**, supporting CUDA versions 10.0+ and above. It requires no installation of the CUDA SDK, header files, or static linking. The library dynamically loads CUDA libraries from the system path. It will automatically search for CUDA's dynamic link library from the system path and dynamically load the functions inside and use them.
 
 
-**Note**: If your operating environment does not support CUDA or does not meet the conditions for using CUDA acceleration, it will automatically fall back to the CPU (OpenMP/C++ Thread) for processing.
+**Note**: If your operating environment does not support CUDA or does not meet the conditions for using CUDA acceleration, it will automatically fall back to the CPU (OpenMP/C++ Thread/Intel oneTBB) for processing.
 The functions support passing in cuda device memory and host memory parameters.
 
 
@@ -20,7 +20,7 @@ The functions support passing in cuda device memory and host memory parameters.
 FastChwHwcConverterROCm.hpp is a high-performance, GPU-accelerated library for converting image data formats between **HWC** and **CHW**, supporting ROCm versions 5.0+ and above. Like the CUDA library, it does not require the ROCm (HIP) SDK, header files, or static linking, and dynamically loads ROCm libraries from the system path.
 
 
-**Note**: If your operating environment does not support ROCm or does not meet the conditions for using ROCm acceleration, it will automatically fall back to the CPU (OpenMP) for processing.
+**Note**: If your operating environment does not support ROCm or does not meet the conditions for using ROCm acceleration, it will automatically fall back to the CPU (OpenMP/C++ Thread/Intel oneTBB) for processing.
 The functions support passing in ROCm device memory and host memory parameters.
 
 
