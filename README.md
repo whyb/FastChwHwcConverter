@@ -89,7 +89,7 @@ Mapping to the actual pixel positions:
 The conversion between HWC (Height-Width-Channel) and CHW (Channel-Height-Width) formats is crucial for optimizing image processing tasks. Different machine learning frameworks and libraries have varying data format preferences. For instance, many deep learning frameworks, such as PyTorch, prefer the CHW format, while libraries like OpenCV often use the HWC format. By converting between these formats, we ensure compatibility and efficient data handling, enabling seamless transitions between different processing pipelines and maximizing performance for specific tasks. This flexibility enhances the overall efficiency and effectiveness of image processing and machine learning workflows.
 
 ## Features
-- **High-Performance**: Utilizes C++ Thread / OpenMP for parallel processing. Make full use of CPU multi-core features.
+- **High-Performance**: Utilizes C++ Thread / OpenMP / Intel oneTBB for parallel processing. Make full use of CPU multi-core features.
 - **GPU Optimization**: Fully leverages NVIDIA CUDA and AMD ROCm technologies to harness the computational power of GPUs, accelerating performance for intensive workloads.
 - **Header-Only**: Include **ONLY** a single header file. Easy to integrate into your C/C++ project. [example](#example).
 - **Flexible**: Supports scaling, clamping, and normalization of image data, any data type.
