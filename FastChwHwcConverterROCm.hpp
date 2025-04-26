@@ -817,6 +817,13 @@ namespace whyb {
                 std::cerr << "hipCtxDestroy failed with error " << hipRes << std::endl;
                 return false;
             }
+            auto* dlManager = whyb::DynamicLibraryManager::instance();
+#ifdef _WIN32
+            const std::string driver_dll = "amdhip64_6.dll"; // ROCm v6.x: amdhip64_6.dll, ROCm v5.x: amdhip64.dll
+#else
+            const std::string driver_dll = "amdhip64_6.so";
+#endif
+            dlManager->unloadLibrary(driver_dll);
             return true;
         }
 
