@@ -726,19 +726,26 @@ namespace whyb {
         {
             CUresult cuRes = cuModuleUnload(cudamodule);
             if (cuRes != 0) {
-                std::cerr << "hipModuleUnload failed with error " << cuRes << std::endl;
+                std::cerr << "cuModuleUnload failed with error " << cuRes << std::endl;
                 return false;
             }
             cuRes = cuStreamDestroy(cudastream);
             if (cuRes != 0) {
-                std::cerr << "hipStreamDestroy failed with error " << cuRes << std::endl;
+                std::cerr << "cuStreamDestroy failed with error " << cuRes << std::endl;
                 return false;
             }
             cuRes = cuCtxDestroy(context);
             if (cuRes != 0) {
-                std::cerr << "hipCtxDestroy failed with error " << cuRes << std::endl;
+                std::cerr << "cuCtxDestroy failed with error " << cuRes << std::endl;
                 return false;
             }
+            auto* dlManager = whyb::DynamicLibraryManager::instance();
+#ifdef _WIN32
+            const std::string driver_dll = "nvcuda.dll";
+#else
+            const std::string driver_dll = "libcuda.so";
+#endif
+            dlManager->unloadLibrary(driver_dll);
             return true;
         }
     private:
