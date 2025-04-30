@@ -17,7 +17,6 @@ jobs:
       run: |
         sudo apt-get update -y
         sudo apt-get install -y cmake
-        #sudo apt-get install -y libomp-dev
 
     - name: CMake Configure & Generate
       run: cmake -S . -B build -DCMAKE_CXX_FLAGS="-static-libgcc -static-libstdc++" -DBUILD_EXAMPLE:BOOL="1" -DBUILD_EXAMPLE_OPENCV:BOOL="0" -DBUILD_BENCHMARK:BOOL="1" -DBUILD_CUDA_BENCHMARK:BOOL="1" -DBUILD_ROCM_BENCHMARK:BOOL="1" -DUSE_OPENMP:BOOL="0" 
