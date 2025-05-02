@@ -37,7 +37,6 @@ jobs:
       run: build/rocm_benchmark
 
     # - name: Run example-opencv tests
-    #   run: build/example-opencv
 
   build-macos-x64:
     runs-on: macos-latest
