@@ -118,8 +118,6 @@ jobs:
       run: build\Release\rocm_benchmark.exe
 
     # - name: Run example-opencv tests
-    #   run: |
-    #     copy C:\tools\opencv\build\x64\vc16\bin\opencv_world4100.dll build\Release\
 
 
   build-windows-x86:
