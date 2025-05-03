@@ -120,7 +120,6 @@ jobs:
     # - name: Run example-opencv tests
     #   run: |
     #     copy C:\tools\opencv\build\x64\vc16\bin\opencv_world4100.dll build\Release\
-    #     build\Release\example-opencv.exe
 
 
   build-windows-x86:
