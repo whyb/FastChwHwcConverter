@@ -117,8 +117,6 @@ jobs:
     - name: Run rocm benchmark tests
       run: build\Release\rocm_benchmark.exe
 
-    # - name: Run example-opencv tests
-
 
   build-windows-x86:
     runs-on: windows-latest
