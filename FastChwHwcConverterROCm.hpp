@@ -237,7 +237,7 @@ namespace whyb {
             amd();
             if (initROCmStatus != InitROCmStatusEnum::Inited) {
                 // use cpu
-                cpu::hwc2chw<uint8_t, float>(h, w, c, src, dst, alpha); return;
+                cpu::hwc2chw<uint8_t, float, true>(h, w, c, src, dst, alpha); return;
             }
             // Initialize sizes
             const size_t pixel_size = h * w * c;
@@ -254,7 +254,7 @@ namespace whyb {
             if (hipRes0 != 0 || hipRes1 != 0) {
                 hipFreeAsync(rocm_input_memory, rocmstream);
                 hipFreeAsync(rocm_output_memory, rocmstream);
-                cpu::hwc2chw<uint8_t, float>(h, w, c, src, dst, alpha);
+                cpu::hwc2chw<uint8_t, float, true>(h, w, c, src, dst, alpha);
                 return;
             }
 
@@ -264,7 +264,7 @@ namespace whyb {
             if (hipRes2 != 0) {
                 hipFreeAsync(rocm_input_memory, rocmstream);
                 hipFreeAsync(rocm_output_memory, rocmstream);
-                cpu::hwc2chw<uint8_t, float>(h, w, c, src, dst, alpha);
+                cpu::hwc2chw<uint8_t, float, true>(h, w, c, src, dst, alpha);
                 return;
             }
 
@@ -287,7 +287,7 @@ namespace whyb {
             if (hipRes3 != 0) {
                 hipFreeAsync(rocm_input_memory, rocmstream);
                 hipFreeAsync(rocm_output_memory, rocmstream);
-                cpu::hwc2chw<uint8_t, float>(h, w, c, src, dst, alpha);
+                cpu::hwc2chw<uint8_t, float, true>(h, w, c, src, dst, alpha);
                 return;
             }
 
@@ -297,7 +297,7 @@ namespace whyb {
             if (hipRes5 != 0) {
                 hipFreeAsync(rocm_input_memory, rocmstream);
                 hipFreeAsync(rocm_output_memory, rocmstream);
-                cpu::hwc2chw<uint8_t, float>(h, w, c, src, dst, alpha);
+                cpu::hwc2chw<uint8_t, float, true>(h, w, c, src, dst, alpha);
                 return;
             }
 
@@ -309,7 +309,7 @@ namespace whyb {
             hipError_t hipRes4 = hipStreamSynchronize(rocmstream);
 
             if (hipRes4 != 0) {
-                cpu::hwc2chw<uint8_t, float>(h, w, c, src, dst, alpha);
+                cpu::hwc2chw<uint8_t, float, true>(h, w, c, src, dst, alpha);
                 return;
             }
         }
@@ -331,7 +331,7 @@ namespace whyb {
             amd();
             if (initROCmStatus != InitROCmStatusEnum::Inited) {
                 // use cpu
-                cpu::chw2hwc<float, uint8_t>(h, w, c, src, dst, alpha); return;
+                cpu::chw2hwc<float, uint8_t, true>(h, w, c, src, dst, alpha); return;
             }
             // use rocm
             const size_t pixel_size = h * w * c;
@@ -347,7 +347,7 @@ namespace whyb {
             if (hipRes0 != 0 || hipRes1 != 0) {
                 hipFreeAsync(rocm_input_memory, rocmstream);
                 hipFreeAsync(rocm_output_memory, rocmstream);
-                cpu::chw2hwc<float, uint8_t>(h, w, c, src, dst, alpha); return;
+                cpu::chw2hwc<float, uint8_t, true>(h, w, c, src, dst, alpha); return;
             }
 
             // Copy host memory to device memory
@@ -356,7 +356,7 @@ namespace whyb {
             if (hipRes2 != 0) {
                 hipFreeAsync(rocm_input_memory, rocmstream);
                 hipFreeAsync(rocm_output_memory, rocmstream);
-                cpu::chw2hwc<float, uint8_t>(h, w, c, src, dst, alpha); return;
+                cpu::chw2hwc<float, uint8_t, true>(h, w, c, src, dst, alpha); return;
             }
 
             // Call kernel
@@ -380,7 +380,7 @@ namespace whyb {
             if (hipRes3 != 0) {
                 hipFreeAsync(rocm_input_memory, rocmstream);
                 hipFreeAsync(rocm_output_memory, rocmstream);
-                cpu::chw2hwc<float, uint8_t>(h, w, c, src, dst, alpha); return;
+                cpu::chw2hwc<float, uint8_t, true>(h, w, c, src, dst, alpha); return;
             }
 
             // Copy device memory to host memory
@@ -389,7 +389,7 @@ namespace whyb {
             if (hipRes5 != 0) {
                 hipFreeAsync(rocm_input_memory, rocmstream);
                 hipFreeAsync(rocm_output_memory, rocmstream);
-                cpu::chw2hwc<float, uint8_t>(h, w, c, src, dst, alpha); return;
+                cpu::chw2hwc<float, uint8_t, true>(h, w, c, src, dst, alpha); return;
             }
 
             // Free memory
@@ -399,7 +399,7 @@ namespace whyb {
             hipError_t hipRes4 = hipStreamSynchronize(rocmstream);
 
             if (hipRes4 != 0) {
-                cpu::chw2hwc<float, uint8_t>(h, w, c, src, dst, alpha); return;
+                cpu::chw2hwc<float, uint8_t, true>(h, w, c, src, dst, alpha); return;
             }
         }
 
