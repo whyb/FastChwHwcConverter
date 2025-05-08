@@ -204,7 +204,7 @@ namespace whyb {
             nvidia();
             if (initCUDAStatus != InitCUDAStatusEnum::Inited) {
                 // use cpu
-                cpu::hwc2chw<uint8_t, float>(h, w, c, src, dst, alpha); return;
+                cpu::hwc2chw<uint8_t, float, true>(h, w, c, src, dst, alpha); return;
             }
             // use cuda
             const size_t pixel_size = h * w * c;
@@ -218,20 +218,20 @@ namespace whyb {
             if (cuRes0 != 0 || cuRes1 != 0) {
                 cuMemFreeAsync(cuda_input_memory, cudastream);
                 cuMemFreeAsync(cuda_output_memory, cudastream);
-                cpu::hwc2chw<uint8_t, float>(h, w, c, src, dst, alpha); return;
+                cpu::hwc2chw<uint8_t, float, true>(h, w, c, src, dst, alpha); return;
             }
             // copy host memory to device memory
             CUresult cuRes2 = cuMemcpyHtoD(cuda_input_memory, src, input_size);
             if (cuRes2 != 0) {
                 cuMemFreeAsync(cuda_input_memory, cudastream);
                 cuMemFreeAsync(cuda_output_memory, cudastream);
-                cpu::hwc2chw<uint8_t, float>(h, w, c, src, dst, alpha); return;
+                cpu::hwc2chw<uint8_t, float, true>(h, w, c, src, dst, alpha); return;
             }
             // call cuda function
             if (hwc2chwCUDAFun == nullptr) {
                 cuMemFreeAsync(cuda_input_memory, cudastream);
                 cuMemFreeAsync(cuda_output_memory, cudastream);
-                cpu::hwc2chw<uint8_t, float>(h, w, c, src, dst, alpha); return;
+                cpu::hwc2chw<uint8_t, float, true>(h, w, c, src, dst, alpha); return;
             }
             const unsigned int blockDimX = 32, blockDimY = 32, blockDimZ = 1;
             const unsigned int gridDimX = ((unsigned int)w + blockDimX - 1) / blockDimX;
@@ -250,14 +250,14 @@ namespace whyb {
             if (cuRes3 != 0) {
                 cuMemFreeAsync(cuda_input_memory, cudastream);
                 cuMemFreeAsync(cuda_output_memory, cudastream);
-                cpu::hwc2chw<uint8_t, float>(h, w, c, src, dst, alpha); return;
+                cpu::hwc2chw<uint8_t, float, true>(h, w, c, src, dst, alpha); return;
             }
             // copy device memory to host memory
             CUresult cuRes4 = cuMemcpyDtoHAsync(dst, cuda_output_memory, output_size, cudastream);
             if (cuRes4 != 0) {
                 cuMemFreeAsync(cuda_input_memory, cudastream);
                 cuMemFreeAsync(cuda_output_memory, cudastream);
-                cpu::hwc2chw<uint8_t, float>(h, w, c, src, dst, alpha); return;
+                cpu::hwc2chw<uint8_t, float, true>(h, w, c, src, dst, alpha); return;
             }
             CUresult cuRes5 = cuMemFreeAsync(cuda_input_memory, cudastream);
             CUresult cuRes6 = cuMemFreeAsync(cuda_output_memory, cudastream);
@@ -265,7 +265,7 @@ namespace whyb {
             if (cuRes7 != 0) {
                 cuMemFreeAsync(cuda_input_memory, cudastream);
                 cuMemFreeAsync(cuda_output_memory, cudastream);
-                cpu::hwc2chw<uint8_t, float>(h, w, c, src, dst, alpha); return;
+                cpu::hwc2chw<uint8_t, float, true>(h, w, c, src, dst, alpha); return;
             }
             return;
         }
@@ -287,7 +287,7 @@ namespace whyb {
             nvidia();
             if (initCUDAStatus != InitCUDAStatusEnum::Inited) {
                 // use cpu
-                cpu::chw2hwc<float, uint8_t>(c, h, w, src, dst, alpha); return;
+                cpu::chw2hwc<float, uint8_t, true>(c, h, w, src, dst, alpha); return;
             }
             // use cuda
             const size_t pixel_size = h * w * c;
@@ -301,20 +301,20 @@ namespace whyb {
             if (cuRes0 != 0 || cuRes1 != 0) {
                 cuMemFreeAsync(cuda_input_memory, cudastream);
                 cuMemFreeAsync(cuda_output_memory, cudastream);
-                cpu::chw2hwc<float, uint8_t>(h, w, c, src, dst, alpha); return;
+                cpu::chw2hwc<float, uint8_t, true>(h, w, c, src, dst, alpha); return;
             }
             // copy host memory to device memory
             CUresult cuRes2 = cuMemcpyHtoDAsync(cuda_input_memory, src, input_size, cudastream);
             if (cuRes2 != 0) {
                 cuMemFreeAsync(cuda_input_memory, cudastream);
                 cuMemFreeAsync(cuda_output_memory, cudastream);
-                cpu::chw2hwc<float, uint8_t>(h, w, c, src, dst, alpha); return;
+                cpu::chw2hwc<float, uint8_t, true>(h, w, c, src, dst, alpha); return;
             }
             // call cuda function
             if (chw2hwcCUDAFun == nullptr) {
                 cuMemFreeAsync(cuda_input_memory, cudastream);
                 cuMemFreeAsync(cuda_output_memory, cudastream);
-                cpu::chw2hwc<float, uint8_t>(h, w, c, src, dst, alpha); return;
+                cpu::chw2hwc<float, uint8_t, true>(h, w, c, src, dst, alpha); return;
             }
             const unsigned int blockDimX = 32, blockDimY = 32, blockDimZ = 1;
             const unsigned int gridDimX = ((unsigned int)w + blockDimX - 1) / blockDimX;
@@ -333,14 +333,14 @@ namespace whyb {
             if (cuRes3 != 0) {
                 cuMemFreeAsync(cuda_input_memory, cudastream);
                 cuMemFreeAsync(cuda_output_memory, cudastream);
-                cpu::chw2hwc<float, uint8_t>(h, w, c, src, dst, alpha); return;
+                cpu::chw2hwc<float, uint8_t, true>(h, w, c, src, dst, alpha); return;
             }
             // copy device memory to host memory
             CUresult cuRes4 = cuMemcpyDtoHAsync(dst, cuda_output_memory, output_size, cudastream);
             if (cuRes4 != 0) {
                 cuMemFreeAsync(cuda_input_memory, cudastream);
                 cuMemFreeAsync(cuda_output_memory, cudastream);
-                cpu::chw2hwc<float, uint8_t>(h, w, c, src, dst, alpha); return;
+                cpu::chw2hwc<float, uint8_t, true>(h, w, c, src, dst, alpha); return;
             }
             CUresult cuRes5 = cuMemFreeAsync(cuda_input_memory, cudastream);
             CUresult cuRes6 = cuMemFreeAsync(cuda_output_memory, cudastream);
@@ -348,7 +348,7 @@ namespace whyb {
             if (cuRes7 != 0) {
                 cuMemFreeAsync(cuda_input_memory, cudastream);
                 cuMemFreeAsync(cuda_output_memory, cudastream);
-                cpu::chw2hwc<float, uint8_t>(h, w, c, src, dst, alpha); return;
+                cpu::chw2hwc<float, uint8_t, true>(h, w, c, src, dst, alpha); return;
             }
             return;
         }
