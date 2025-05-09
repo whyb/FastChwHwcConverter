@@ -76,12 +76,21 @@ public:
 #ifdef _WIN32
             LibraryHandle handle = LoadLibraryEx(libraryName.c_str(), nullptr,
                 LOAD_LIBRARY_SEARCH_DEFAULT_DIRS|LOAD_LIBRARY_SEARCH_SYSTEM32);
+            if (!handle) {
+                auto lastError = GetLastError();
+                std::cerr << "loadLibrary failed, Code: " << lastError << "." << std::endl;
+                return nullptr;
+            }
 #else
             LibraryHandle handle = dlopen(libraryName.c_str(), RTLD_LAZY);
+            if (!handle) {
+                std::cerr << "loadLibrary failed." << std::endl;
+                return nullptr;
+            }
 #endif
             libraries_[libraryName] = handle;
+            return handle;
         }
-
         return libraries_[libraryName];
     }
 
