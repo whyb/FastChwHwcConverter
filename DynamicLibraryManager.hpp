@@ -21,6 +21,7 @@
 
 #include <map>
 #include <string>
+#include <iostream>
 
 #ifdef _WIN32
 #define NOMINMAX
