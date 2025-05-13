@@ -687,7 +687,8 @@ namespace whyb {
                 !hipStreamCreate || !hipStreamDestroy || !hipStreamSynchronize ||
                 !hipModuleLoadDataEx ||
                 !hipModuleGetFunction || !hipLaunchKernel || !hipCtxSynchronize ||
-                !hipMalloc || !hipMallocAsync || !hipFree || !hipFreeAsync ||
+                !hipMalloc || !hipMallocAsync || !hipHostMalloc || 
+                !hipFree || !hipFreeAsync || !hipHostFree ||
                 !hipMemcpy || !hipMemcpyAsync ||
                 !hipMemcpyHtoD || !hipMemcpyHtoDAsync ||
                 !hipMemcpyDtoH || !hipMemcpyDtoHAsync ||
