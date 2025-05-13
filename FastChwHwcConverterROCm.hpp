@@ -687,10 +687,10 @@ namespace whyb {
                 !hipStreamCreate || !hipStreamDestroy || !hipStreamSynchronize ||
                 !hipModuleLoadDataEx ||
                 !hipModuleGetFunction || !hipLaunchKernel || !hipCtxSynchronize ||
-                !hipMalloc || !hipFree || !hipMallocAsync || !hipFreeAsync ||
+                !hipMalloc || !hipMallocAsync || !hipFree || !hipFreeAsync ||
                 !hipMemcpy || !hipMemcpyAsync ||
-                !hipMemcpyHtoD || !hipMemcpyDtoH ||
-                !hipMemcpyHtoDAsync || !hipMemcpyDtoHAsync ||
+                !hipMemcpyHtoD || !hipMemcpyHtoDAsync ||
+                !hipMemcpyDtoH || !hipMemcpyDtoHAsync ||
                 !hipEventCreate || !hipEventRecord ||
                 !hipEventSynchronize || !hipEventElapsedTime || !hipEventDestroy
                 ) {
