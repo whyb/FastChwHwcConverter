@@ -600,8 +600,8 @@ namespace whyb {
             cuLaunchKernel = (cuLaunchKernel_t)(dlManager->getFunction(driver_dll, "cuLaunchKernel"));
             cuCtxSynchronize = (cuCtxSynchronize_t)(dlManager->getFunction(driver_dll, "cuCtxSynchronize"));
             cuMemAlloc = (cuMemAlloc_t)(dlManager->getFunction(driver_dll, "cuMemAlloc_v2"));
-            cuMemAllocHost = (cuMemAllocHost_t)(dlManager->getFunction(driver_dll, "cuMemAllocHost_v2"));
             cuMemAllocAsync = (cuMemAllocAsync_t)(dlManager->getFunction(driver_dll, "cuMemAllocAsync"));
+            cuMemAllocHost = (cuMemAllocHost_t)(dlManager->getFunction(driver_dll, "cuMemAllocHost_v2"));
             cuMemFree = (cuMemFree_t)(dlManager->getFunction(driver_dll, "cuMemFree_v2"));
             cuMemFreeAsync = (cuMemFreeAsync_t)(dlManager->getFunction(driver_dll, "cuMemFreeAsync"));
             cuMemFreeHost = (cuMemFreeHost_t)(dlManager->getFunction(driver_dll, "cuMemFreeHost"));
