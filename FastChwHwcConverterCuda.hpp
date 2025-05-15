@@ -610,9 +610,10 @@ namespace whyb {
             cuMemcpyDtoH = (cuMemcpyDtoH_t)(dlManager->getFunction(driver_dll, "cuMemcpyDtoH_v2"));
             cuMemcpyDtoHAsync = (cuMemcpyDtoHAsync_t)(dlManager->getFunction(driver_dll, "cuMemcpyDtoHAsync_v2"));
 
-            if (!cuInit || !cuDeviceGet || !cuCtxCreate || !cuModuleLoadDataEx ||
-                !cuModuleGetFunction || !cuLaunchKernel || !cuCtxSynchronize ||
+            if (!cuInit || !cuDeviceGet || !cuCtxCreate || !cuCtxDestroy ||
                 !cuStreamCreate || !cuStreamDestroy || !cuStreamSynchronize ||
+                !cuModuleLoadDataEx || !cuModuleUnload || !cuModuleGetFunction ||
+                !cuLaunchKernel || !cuCtxSynchronize ||
                 !cuMemAlloc || !cuMemAllocAsync || !cuMemAllocHost ||
                 !cuMemFree || !cuMemFreeAsync || !cuMemFreeHost ||
                 !cuMemcpyHtoD || !cuMemcpyDtoH || !cuMemcpyHtoDAsync || !cuMemcpyDtoHAsync) {
