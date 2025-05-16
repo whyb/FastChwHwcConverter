@@ -616,7 +616,7 @@ namespace whyb {
                 !cuLaunchKernel || !cuCtxSynchronize ||
                 !cuMemAlloc || !cuMemAllocAsync || !cuMemAllocHost ||
                 !cuMemFree || !cuMemFreeAsync || !cuMemFreeHost ||
-                !cuMemcpyHtoD || !cuMemcpyDtoH || !cuMemcpyHtoDAsync || !cuMemcpyDtoHAsync) {
+                !cuMemcpyHtoD || !cuMemcpyHtoDAsync || !cuMemcpyDtoH || !cuMemcpyDtoHAsync) {
                 std::cerr << "Failed to load one or more CUDA Driver API functions." << std::endl;
                 return false;
             }
