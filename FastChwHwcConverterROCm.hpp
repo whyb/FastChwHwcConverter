@@ -591,10 +591,10 @@ namespace whyb {
                 executablePath = executablePath.substr(0, lastSlash);
             }
 #endif
-            // ROCm version list: v6.3 ~ 5.0.
+            // ROCm version list: v5.0 ~ v6.4.
             // ref: https://rocm.docs.amd.com/en/latest/release/versions.html
             const std::vector<std::string> rocmVersions = {
-                "0603", "0602", "0601", "0600", // driver: amdhip64_6.dll
+                "0604", "0603", "0602", "0601", "0600", // driver: amdhip64_6.dll
                 "0507", "0506", "0505", "0504", "0502", "0501", "0500"  // driver: amdhip64.dll
             };
 
