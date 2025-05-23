@@ -19,7 +19,7 @@ jobs:
         sudo apt-get install -y cmake
 
     - name: CMake Configure & Generate
-      run: cmake -S . -B build -DCMAKE_CXX_FLAGS="-static-libgcc -static-libstdc++" -DBUILD_EXAMPLE:BOOL="1" -DBUILD_EXAMPLE_OPENCV:BOOL="0" -DBUILD_BENCHMARK:BOOL="1" -DBUILD_CUDA_BENCHMARK:BOOL="1" -DBUILD_ROCM_BENCHMARK:BOOL="1" -DUSE_OPENMP:BOOL="0" 
+      run: cmake -S . -B build -DCMAKE_CXX_FLAGS="-static-libgcc -static-libstdc++" -DBUILD_EXAMPLE:BOOL="1" -DBUILD_EXAMPLE_OPENCV:BOOL="0" -DBUILD_BENCHMARK:BOOL="1" -DBUILD_CUDA_BENCHMARK:BOOL="1" -DBUILD_ROCM_BENCHMARK:BOOL="1" -DUSE_OPENMP:BOOL="0" -DUSE_TBB:BOOL="0"
 
     - name: Build
       run: cmake --build build --config Release
@@ -49,7 +49,7 @@ jobs:
         brew install cmake
 
     - name: CMake Configure & Generate
-      run: cmake -S . -B build -DBUILD_EXAMPLE:BOOL="1" -DBUILD_EXAMPLE_OPENCV:BOOL="0" -DBUILD_BENCHMARK:BOOL="1" -DBUILD_CUDA_BENCHMARK:BOOL="0" -DBUILD_ROCM_BENCHMARK:BOOL="0" -DUSE_OPENMP:BOOL="0"
+      run: cmake -S . -B build -DBUILD_EXAMPLE:BOOL="1" -DBUILD_EXAMPLE_OPENCV:BOOL="0" -DBUILD_BENCHMARK:BOOL="1" -DBUILD_CUDA_BENCHMARK:BOOL="0" -DBUILD_ROCM_BENCHMARK:BOOL="0" -DUSE_OPENMP:BOOL="0" -DUSE_TBB:BOOL="0"
 
     - name: Build
       run: cmake --build build --config Release
@@ -72,7 +72,7 @@ jobs:
         brew install cmake
 
     - name: CMake Configure & Generate (ARM64)
-      run: cmake -S . -B build-arm -DCMAKE_SYSTEM_PROCESSOR=arm64 -DBUILD_EXAMPLE:BOOL="1" -DBUILD_EXAMPLE_OPENCV:BOOL="0" -DBUILD_BENCHMARK:BOOL="1" -DBUILD_CUDA_BENCHMARK:BOOL="0" -DBUILD_ROCM_BENCHMARK:BOOL="0" -DUSE_OPENMP:BOOL="0"
+      run: cmake -S . -B build-arm -DCMAKE_SYSTEM_PROCESSOR=arm64 -DBUILD_EXAMPLE:BOOL="1" -DBUILD_EXAMPLE_OPENCV:BOOL="0" -DBUILD_BENCHMARK:BOOL="1" -DBUILD_CUDA_BENCHMARK:BOOL="0" -DBUILD_ROCM_BENCHMARK:BOOL="0" -DUSE_OPENMP:BOOL="0" -DUSE_TBB:BOOL="0"
 
     - name: Build (ARM)
       run: cmake --build build-arm --config Release
@@ -100,7 +100,7 @@ jobs:
         #choco install opencv --version=4.10.0 --force
 
     - name: CMake Configure & Generate
-      run: cmake -S . -B build -DBUILD_EXAMPLE:BOOL="1" -DBUILD_EXAMPLE_OPENCV:BOOL="0" -DBUILD_BENCHMARK:BOOL="1" -DBUILD_CUDA_BENCHMARK:BOOL="1" -DBUILD_ROCM_BENCHMARK:BOOL="1" -DUSE_OPENMP:BOOL="0" -DOpenCV_DIR:PATH="C:\tools\opencv\build"
+      run: cmake -S . -B build -DBUILD_EXAMPLE:BOOL="1" -DBUILD_EXAMPLE_OPENCV:BOOL="0" -DBUILD_BENCHMARK:BOOL="1" -DBUILD_CUDA_BENCHMARK:BOOL="1" -DBUILD_ROCM_BENCHMARK:BOOL="1" -DUSE_OPENMP:BOOL="0" -DUSE_TBB:BOOL="0" -DOpenCV_DIR:PATH="C:\tools\opencv\build"
 
     - name: Build
       run: cmake --build build --config Release
@@ -134,7 +134,7 @@ jobs:
         choco install cmake --force
 
     - name: CMake Configure & Generate
-      run: cmake -S . -B build -DBUILD_EXAMPLE:BOOL="1" -DBUILD_BENCHMARK:BOOL="1" -DBUILD_CUDA_BENCHMARK:BOOL="1" -DBUILD_ROCM_BENCHMARK:BOOL="1" -DUSE_OPENMP:BOOL="0" -A Win32
+      run: cmake -S . -B build -DBUILD_EXAMPLE:BOOL="1" -DBUILD_BENCHMARK:BOOL="1" -DBUILD_CUDA_BENCHMARK:BOOL="1" -DBUILD_ROCM_BENCHMARK:BOOL="1" -DUSE_OPENMP:BOOL="0" -DUSE_TBB:BOOL="0" -A Win32
 
     - name: Build
       run: cmake --build build --config Release
@@ -168,7 +168,7 @@ jobs:
         choco install cmake --force
 
     - name: CMake Configure & Generate
-      run: cmake -S . -B build -DBUILD_EXAMPLE:BOOL="1" -DBUILD_BENCHMARK:BOOL="1" -DBUILD_CUDA_BENCHMARK:BOOL="1" -DBUILD_ROCM_BENCHMARK:BOOL="1" -DUSE_OPENMP:BOOL="0" -A ARM64
+      run: cmake -S . -B build -DBUILD_EXAMPLE:BOOL="1" -DBUILD_BENCHMARK:BOOL="1" -DBUILD_CUDA_BENCHMARK:BOOL="1" -DBUILD_ROCM_BENCHMARK:BOOL="1" -DUSE_OPENMP:BOOL="0" -DUSE_TBB:BOOL="0" -A ARM64
 
     - name: Build
       run: cmake --build build --config Release
