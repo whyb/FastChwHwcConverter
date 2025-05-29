@@ -339,10 +339,16 @@ namespace whyb {
         }
 
         inline static size_t get_num_threads() {
+#ifdef SINGLE_THREAD
+            static size_t num_threads = 1;
+#else
 #ifdef USE_OPENMP
             static size_t num_threads = omp_get_max_threads();
+#elif defined(USE_TBB)
+            static size_t num_threads = tbb::this_task_arena::max_concurrency();
 #else
             static size_t num_threads = std::thread::hardware_concurrency();
+#endif
 #endif
             return num_threads;
         }
