@@ -421,7 +421,7 @@ int main() {
     return 0;
 }
 ```
-If you are using OpenCV's `cv::Mat`, please refer to the **test/example-opencv.cpp** file.
+If you are using OpenCV's `cv::Mat`, Please refer to the **test/example-opencv.cpp** file.
 
 ## Benchmark Performance Timing Results
 
@@ -461,4 +461,4 @@ The table below shows the benchmark performance timing for different image dimen
 | 7680x4320x4 | 133.08ms| 136.31ms| 23.398ms  | 18.445ms  | 1.144ms | 1.013ms | 0.686ms | 0.220ms |
 
 ## Contact
-For any questions or suggestions, please open an issue or contact the me.
+For any questions or suggestions, please feel free to open an issue or reach out to me.
