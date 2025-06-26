@@ -4,7 +4,7 @@
 #include <chrono>
 
 #include "FastChwHwcConverterCuda.hpp"
-#define TEST_COUNT 100
+#define TEST_COUNT 10000
 
 int main() {
     if (!whyb::nvidia::init()) { return 0; }
@@ -52,7 +52,7 @@ int main() {
             for (size_t i = 0; i < TEST_COUNT; ++i) {
 
                 // 1. host memory
-                //whyb::hwc2chw_cuda(height, width, channel, (uint8_t*)src_uint8.data(), (float*)src_float.data(), 1.f/255.f);
+                //whyb::nvidia::hwc2chw(height, width, channel, (uint8_t*)src_uint8.data(), (float*)src_float.data(), 1.f/255.f);
 
                 // 2. device memory
                 whyb::nvidia::hwc2chw(height, width, channel, src_uint8, src_float, 1.f / 255.f);
@@ -65,7 +65,7 @@ int main() {
             for (size_t i = 0; i < TEST_COUNT; ++i) {
 
                 // 1. host memory
-                //whyb::chw2hwc_cuda(channel, height, width, (float*)out_float.data(), (uint8_t*)out_uint8.data(), 255.f);
+                //whyb::nvidia::chw2hwc_cuda(channel, height, width, (float*)out_float.data(), (uint8_t*)out_uint8.data(), 255.f);
 
                 // 2. device memory
                 whyb::nvidia::chw2hwc(channel, height, width, out_float, out_uint8, 255.f);

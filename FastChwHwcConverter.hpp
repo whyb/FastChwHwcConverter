@@ -138,7 +138,7 @@ namespace whyb {
             }
 #else
 #ifdef USE_OPENMP
-            // openmp
+            // OpenMP
             const size_t hw_stride = w * h;
             const size_t chunk_size = hw_stride / get_num_threads();
 #pragma omp parallel
@@ -252,7 +252,7 @@ namespace whyb {
             }
 #else
 #ifdef USE_OPENMP
-            // openmp
+            // OpenMP
             const size_t hw_stride = w * h;
             const size_t chunk_size = hw_stride / get_num_threads();
 #pragma omp parallel

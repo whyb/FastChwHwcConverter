@@ -4,7 +4,7 @@
 #include <chrono>
 
 #include "FastChwHwcConverterROCm.hpp"
-#define TEST_COUNT 100
+#define TEST_COUNT 10000
 
 int main() {
     if (!whyb::amd::init()) { return 0; }
