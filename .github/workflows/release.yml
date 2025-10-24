@@ -23,15 +23,30 @@ jobs:
       run: |
         sudo apt-get update -y
         sudo apt-get install -y cmake
+        sudo apt-get install -y clang lld libc++-dev libc++abi-dev libclang-rt-dev
 
-    - name: CMake Configure & Generate(x64)
-      run: cmake -S . -B build-x64 -DCMAKE_CXX_FLAGS="-static-libgcc -static-libstdc++" -DBUILD_EXAMPLE:BOOL="1" -DBUILD_EXAMPLE_OPENCV:BOOL="0" -DBUILD_BENCHMARK:BOOL="1" -DBUILD_CUDA_BENCHMARK:BOOL="1" -DBUILD_ROCM_BENCHMARK:BOOL="1" -DUSE_OPENMP:BOOL="0" -DUSE_TBB:BOOL="0"
+    - name: CMake Configure & Generate (x64)
+      run: |
+        cmake -S . -B build-x64 \
+          -DCMAKE_C_COMPILER=clang \
+          -DCMAKE_CXX_COMPILER=clang++ \
+          -DCMAKE_CXX_FLAGS="-stdlib=libc++ -rtlib=compiler-rt -fuse-ld=lld" \
+          -DBUILD_EXAMPLE:BOOL="1" \
+          -DBUILD_EXAMPLE_OPENCV:BOOL="0" \
+          -DBUILD_BENCHMARK:BOOL="1" \
+          -DBUILD_CUDA_BENCHMARK:BOOL="1" \
+          -DBUILD_ROCM_BENCHMARK:BOOL="1" \
+          -DUSE_OPENMP:BOOL="0" \
+          -DUSE_TBB:BOOL="0"
 
-    - name: Build(x64)
+    - name: Build (x64)
       run: cmake --build build-x64 --config Release
 
     - name: List build folder
       run: ls ./build-x64/
+    
+    - name: Check linked libraries
+      run: ldd ./build-x64/example || true
 
     - name: Zip binary files
       run: zip ./bin-linux-gcc-x64.zip ./build-x64/example ./build-x64/benchmark ./build-x64/cuda_benchmark ./build-x64/rocm_benchmark
@@ -52,12 +67,28 @@ jobs:
       run: |
         sudo apt-get update -y
         sudo apt-get install -y cmake
+        sudo apt-get install -y clang lld libc++-dev libc++abi-dev libclang-rt-dev
 
     - name: CMake Configure & Generate (ARM64)
-      run: cmake -S . -B build-arm64 -DCMAKE_SYSTEM_PROCESSOR=arm64 -DBUILD_EXAMPLE:BOOL="1" -DBUILD_EXAMPLE_OPENCV:BOOL="0" -DBUILD_BENCHMARK:BOOL="1" -DBUILD_CUDA_BENCHMARK:BOOL="1" -DBUILD_ROCM_BENCHMARK:BOOL="1" -DUSE_OPENMP:BOOL="0" -DUSE_TBB:BOOL="0"
+      run: |
+        cmake -S . -B build-arm64 \
+          -DCMAKE_SYSTEM_PROCESSOR=arm64 \
+          -DCMAKE_C_COMPILER=clang \
+          -DCMAKE_CXX_COMPILER=clang++ \
+          -DCMAKE_CXX_FLAGS="-stdlib=libc++ -rtlib=compiler-rt -fuse-ld=lld" \
+          -DBUILD_EXAMPLE:BOOL="1" \
+          -DBUILD_EXAMPLE_OPENCV:BOOL="0" \
+          -DBUILD_BENCHMARK:BOOL="1" \
+          -DBUILD_CUDA_BENCHMARK:BOOL="1" \
+          -DBUILD_ROCM_BENCHMARK:BOOL="1" \
+          -DUSE_OPENMP:BOOL="0" \
+          -DUSE_TBB:BOOL="0"
 
     - name: Build (ARM64)
       run: cmake --build build-arm64 --config Release
+
+    - name: Check linked libraries
+      run: ldd ./build-arm64/example || true
 
     - name: Zip binary files
       run: zip ./bin-linux-arm64.zip ./build-arm64/example ./build-arm64/benchmark ./build-arm64/cuda_benchmark ./build-arm64/rocm_benchmark
