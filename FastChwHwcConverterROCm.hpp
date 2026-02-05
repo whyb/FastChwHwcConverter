@@ -487,6 +487,17 @@ namespace whyb {
         }
 
     private:
+
+        static bool isFileExists(const std::string& path)
+        {
+        #ifdef _WIN32
+            DWORD fileAttr = GetFileAttributesA(path.c_str());
+            return (fileAttr != INVALID_FILE_ATTRIBUTES && !(fileAttr & FILE_ATTRIBUTE_DIRECTORY));
+        #else
+            return (access(path.c_str(), F_OK) == 0);
+        #endif
+        }
+
         static std::string compileROCmWithHIPRTC(const std::string& libraryName, const std::string& rocmSource)
         {
             // dynamic load HIPRTC lib
@@ -591,9 +602,10 @@ namespace whyb {
                 executablePath = executablePath.substr(0, lastSlash);
             }
 #endif
-            // ROCm version list: v5.0 ~ v6.4.
+            // ROCm version list: v5.0 ~ v7.2.
             // ref: https://rocm.docs.amd.com/en/latest/release/versions.html
             const std::vector<std::string> rocmVersions = {
+                "0702", "0701", "0700", // driver: amdhip64_7.dll
                 "0604", "0603", "0602", "0601", "0600", // driver: amdhip64_6.dll
                 "0507", "0506", "0505", "0504", "0502", "0501", "0500"  // driver: amdhip64.dll
             };
@@ -601,11 +613,10 @@ namespace whyb {
 #ifdef _WIN32
             for (const auto& version : rocmVersions)
             {   //e.g. hiprtc0602.dll
-                std::string libraryName = executablePath + "\\hiprtc" + version + ".dll";
-                DWORD fileAttr = GetFileAttributesA(libraryName.c_str());
-                if (fileAttr != INVALID_FILE_ATTRIBUTES && !(fileAttr & FILE_ATTRIBUTE_DIRECTORY))  // file exists
+                std::string libraryPath = executablePath + "\\hiprtc" + version + ".dll";
+                if (isFileExists(libraryPath))
                 {
-                    return libraryName;
+                    return libraryPath;
                 }
             }
 #else
@@ -616,10 +627,10 @@ namespace whyb {
             }
             for (const auto& version : rocmVersions)
             {   //e.g. libhiprtc.so.0602
-                std::string libraryName = executablePath + "/libhiprtc.so." + version;
-                if (access(libraryName.c_str(), F_OK) == 0)  // file exists
+                std::string libraryPath = executablePath + "/libhiprtc.so." + version;
+                if (isFileExists(libraryPath))
                 {
-                    return libraryName;
+                    return libraryPath;
                 }
             }
 #endif
@@ -631,25 +642,33 @@ namespace whyb {
         static bool initROCmDriverAPI()
         {
 #ifdef _WIN32
-            const std::string driver_dll = "amdhip64_6.dll"; // ROCm v6.x: amdhip64_6.dll, ROCm v5.x: amdhip64.dll
+            const std::vector<std::string> candidates = {
+                "amdhip64_7.dll",
+                "amdhip64_6.dll",
+                "amdhip64.dll"
+            };
 #else
-            const std::string driver_dll = "amdhip64_6.so";
+            const std::vector<std::string> candidates = {
+                "amdhip64.so",
+            };
 #endif
             auto* dlManager = whyb::DynamicLibraryManager::instance();
-            auto driverLib = dlManager->loadLibrary(driver_dll);
-            if (!driverLib)
-            {
-#ifdef _WIN32
-                const std::string driver_dll = "amdhip64.dll"; // ROCm v6.x: amdhip64_6.dll, ROCm v5.x: amdhip64.dll
-#else
-                const std::string driver_dll = "amdhip64.so";
-#endif
-                driverLib = dlManager->loadLibrary(driver_dll); //try again
-                if (!driverLib) {
-                    std::cerr << "Failed to load AMD ROCm Driver API library: " << driver_dll << std::endl;
-                    return false;
+            std::string driver_dll = "";
+            void* driverLib = nullptr;
+
+            for (const auto& name : candidates) {
+                driverLib = dlManager->loadLibrary(name);
+                if (driverLib) {
+                    driver_dll = name;
+                    break;
                 }
             }
+
+            if (!driverLib) {
+                std::cerr << "Failed to load any AMD ROCm Driver API library (tried v7, v6, v5)." << std::endl;
+                return false;
+            }
+
             hipInit = (hipInit_t)(dlManager->getFunction(driver_dll, "hipInit"));
             hipDeviceGet = (hipDeviceGet_t)(dlManager->getFunction(driver_dll, "hipDeviceGet"));
             hipCtxCreate = (hipCtxCreate_t)(dlManager->getFunction(driver_dll, "hipCtxCreate"));
