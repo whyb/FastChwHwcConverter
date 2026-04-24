@@ -536,10 +536,15 @@ namespace whyb {
                 executablePath = executablePath.substr(0, lastSlash);
             }
 #endif
-            // CUDA version list: 12.9 ~ 10.0
+            // CUDA version list: 13.2 ~ 10.0
             const std::vector<std::string> cudaVersions = {
+                // 13.x
+                "132_0", "131_0", "130_0",
+                // 12.x
                 "129_0", "128_0", "127_0", "126_0", "125_0", "124_0", "123_0", "122_0", "121_0", "120_0",
+                // 11.x
                 "118_0", "117_0", "116_0", "115_0", "114_0", "113_0", "112_0", "111_0", "110_0",
+                // 10.x
                 "102_0", "101_0", "100_0"
             };
 
