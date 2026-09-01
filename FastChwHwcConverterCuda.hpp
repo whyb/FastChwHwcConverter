@@ -105,29 +105,31 @@ typedef CUresult(*cuMemcpyDtoHAsync_t)(void*, CUdeviceptr, size_t, CUstream);
 #define DYNAMIC_LIBRARY_EXTENSION ".so"
 #endif
 
-// static Cuda Driver API function points
-static cuInit_t cuInit = nullptr;
-static cuDeviceGet_t cuDeviceGet = nullptr;
-static cuCtxCreate_t cuCtxCreate = nullptr;
-static cuCtxDestroy_t cuCtxDestroy = nullptr;
-static cuStreamCreate_t cuStreamCreate = nullptr;
-static cuStreamDestroy_t cuStreamDestroy = nullptr;
-static cuStreamSynchronize_t cuStreamSynchronize = nullptr;
-static cuModuleLoadDataEx_t cuModuleLoadDataEx = nullptr;
-static cuModuleUnload_t cuModuleUnload = nullptr;
-static cuModuleGetFunction_t cuModuleGetFunction = nullptr;
-static cuLaunchKernel_t cuLaunchKernel = nullptr;
-static cuCtxSynchronize_t cuCtxSynchronize = nullptr;
-static cuMemAlloc_t cuMemAlloc = nullptr;
-static cuMemAllocAsync_t cuMemAllocAsync = nullptr;
-static cuMemAllocHost_t cuMemAllocHost = nullptr;
-static cuMemFree_t cuMemFree = nullptr;
-static cuMemFreeAsync_t cuMemFreeAsync = nullptr;
-static cuMemFreeHost_t cuMemFreeHost = nullptr;
-static cuMemcpyHtoD_t cuMemcpyHtoD = nullptr;
-static cuMemcpyHtoDAsync_t cuMemcpyHtoDAsync = nullptr;
-static cuMemcpyDtoH_t cuMemcpyDtoH = nullptr;
-static cuMemcpyDtoHAsync_t cuMemcpyDtoHAsync = nullptr;
+// CUDA Driver API function pointers. These are inline variables (one shared
+// object across translation units) instead of file-scope statics, so every TU
+// that includes this header observes the same initialized set.
+inline cuInit_t cuInit = nullptr;
+inline cuDeviceGet_t cuDeviceGet = nullptr;
+inline cuCtxCreate_t cuCtxCreate = nullptr;
+inline cuCtxDestroy_t cuCtxDestroy = nullptr;
+inline cuStreamCreate_t cuStreamCreate = nullptr;
+inline cuStreamDestroy_t cuStreamDestroy = nullptr;
+inline cuStreamSynchronize_t cuStreamSynchronize = nullptr;
+inline cuModuleLoadDataEx_t cuModuleLoadDataEx = nullptr;
+inline cuModuleUnload_t cuModuleUnload = nullptr;
+inline cuModuleGetFunction_t cuModuleGetFunction = nullptr;
+inline cuLaunchKernel_t cuLaunchKernel = nullptr;
+inline cuCtxSynchronize_t cuCtxSynchronize = nullptr;
+inline cuMemAlloc_t cuMemAlloc = nullptr;
+inline cuMemAllocAsync_t cuMemAllocAsync = nullptr;
+inline cuMemAllocHost_t cuMemAllocHost = nullptr;
+inline cuMemFree_t cuMemFree = nullptr;
+inline cuMemFreeAsync_t cuMemFreeAsync = nullptr;
+inline cuMemFreeHost_t cuMemFreeHost = nullptr;
+inline cuMemcpyHtoD_t cuMemcpyHtoD = nullptr;
+inline cuMemcpyHtoDAsync_t cuMemcpyHtoDAsync = nullptr;
+inline cuMemcpyDtoH_t cuMemcpyDtoH = nullptr;
+inline cuMemcpyDtoHAsync_t cuMemcpyDtoHAsync = nullptr;
 
 static const char* cudaSource = R"(
   typedef unsigned char uint8_t;

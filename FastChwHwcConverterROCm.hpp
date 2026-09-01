@@ -128,38 +128,39 @@ typedef hipError_t(*hipEventDestroy_t)(hipEvent_t);
 #define DYNAMIC_LIBRARY_EXTENSION ".so"
 #endif
 
-// static ROCm Driver API function points
-static hipInit_t hipInit = nullptr;
-static hipDeviceGet_t hipDeviceGet = nullptr;
-static hipCtxCreate_t hipCtxCreate = nullptr;
-static hipCtxDestroy_t hipCtxDestroy = nullptr;
-static hipStreamCreate_t hipStreamCreate = nullptr;
-static hipStreamDestroy_t hipStreamDestroy = nullptr;
-static hipStreamSynchronize_t hipStreamSynchronize = nullptr;
-static hipModuleLoadDataEx_t hipModuleLoadDataEx = nullptr;
-static hipModuleUnload_t hipModuleUnload = nullptr;
-static hipModuleGetFunction_t hipModuleGetFunction = nullptr;
-static hipLaunchKernel_t hipLaunchKernel = nullptr;
-static hipModuleLaunchKernel_t hipModuleLaunchKernel = nullptr;
-static hipCtxSynchronize_t hipCtxSynchronize = nullptr;
-static hipMalloc_t hipMalloc = nullptr;
-static hipMallocAsync_t hipMallocAsync = nullptr;
-static hipHostMalloc_t hipHostMalloc = nullptr;
-static hipFree_t hipFree = nullptr;
-static hipFreeAsync_t hipFreeAsync = nullptr;
-static hipHostFree_t hipHostFree = nullptr;
-static hipMemcpy_t hipMemcpy = nullptr;
-static hipMemcpyAsync_t hipMemcpyAsync = nullptr;
-static hipMemcpyHtoD_t hipMemcpyHtoD = nullptr;
-static hipMemcpyHtoDAsync_t hipMemcpyHtoDAsync = nullptr;
-static hipMemcpyDtoH_t hipMemcpyDtoH = nullptr;
-static hipMemcpyDtoHAsync_t hipMemcpyDtoHAsync = nullptr;
-static hipEventCreate_t hipEventCreate = nullptr;
-static hipEventRecord_t hipEventRecord = nullptr;
-static hipEventSynchronize_t hipEventSynchronize = nullptr;
-static hipEventElapsedTime_t hipEventElapsedTime = nullptr;
-static hipEventDestroy_t hipEventDestroy = nullptr;
-
+// ROCm Driver API function pointers. These are inline variables (one shared
+// object across translation units) instead of file-scope statics, so every TU
+// that includes this header observes the same initialized set.
+inline hipInit_t hipInit = nullptr;
+inline hipDeviceGet_t hipDeviceGet = nullptr;
+inline hipCtxCreate_t hipCtxCreate = nullptr;
+inline hipCtxDestroy_t hipCtxDestroy = nullptr;
+inline hipStreamCreate_t hipStreamCreate = nullptr;
+inline hipStreamDestroy_t hipStreamDestroy = nullptr;
+inline hipStreamSynchronize_t hipStreamSynchronize = nullptr;
+inline hipModuleLoadDataEx_t hipModuleLoadDataEx = nullptr;
+inline hipModuleUnload_t hipModuleUnload = nullptr;
+inline hipModuleGetFunction_t hipModuleGetFunction = nullptr;
+inline hipLaunchKernel_t hipLaunchKernel = nullptr;
+inline hipModuleLaunchKernel_t hipModuleLaunchKernel = nullptr;
+inline hipCtxSynchronize_t hipCtxSynchronize = nullptr;
+inline hipMalloc_t hipMalloc = nullptr;
+inline hipMallocAsync_t hipMallocAsync = nullptr;
+inline hipHostMalloc_t hipHostMalloc = nullptr;
+inline hipFree_t hipFree = nullptr;
+inline hipFreeAsync_t hipFreeAsync = nullptr;
+inline hipHostFree_t hipHostFree = nullptr;
+inline hipMemcpy_t hipMemcpy = nullptr;
+inline hipMemcpyAsync_t hipMemcpyAsync = nullptr;
+inline hipMemcpyHtoD_t hipMemcpyHtoD = nullptr;
+inline hipMemcpyHtoDAsync_t hipMemcpyHtoDAsync = nullptr;
+inline hipMemcpyDtoH_t hipMemcpyDtoH = nullptr;
+inline hipMemcpyDtoHAsync_t hipMemcpyDtoHAsync = nullptr;
+inline hipEventCreate_t hipEventCreate = nullptr;
+inline hipEventRecord_t hipEventRecord = nullptr;
+inline hipEventSynchronize_t hipEventSynchronize = nullptr;
+inline hipEventElapsedTime_t hipEventElapsedTime = nullptr;
+inline hipEventDestroy_t hipEventDestroy = nullptr;
 
 static const char* rocmSource = R"(
 typedef unsigned char uint8_t;
