@@ -24,6 +24,7 @@
 #include <cmath>
 #include <functional>
 #include <limits>
+#include <type_traits>
 #include <vector>
 #include <thread>
 #include <future>
@@ -92,18 +93,18 @@ namespace whyb {
                 if constexpr (NeedClamp) {
                     if constexpr (HasAlpha) {
                         if constexpr (NeedNormalizedMeanStds) {
-                            return static_cast<Dtype>(std_clamp<Dtype>((src_val * alpha - mean[c]) / stds[c], min_v, max_v));
+                            return clamp_cast<Dtype>((src_val * alpha - mean[c]) / stds[c], min_v, max_v);
                         }
                         else {
-                            return static_cast<Dtype>(std_clamp<Dtype>(src_val * alpha, min_v, max_v));
+                            return clamp_cast<Dtype>(src_val * alpha, min_v, max_v);
                         }
                     }
                     else {
                         if constexpr (NeedNormalizedMeanStds) {
-                            return static_cast<Dtype>(std_clamp<Dtype>((src_val - mean[c]) / stds[c], min_v, max_v));
+                            return clamp_cast<Dtype>((src_val - mean[c]) / stds[c], min_v, max_v);
                         }
                         else {
-                            return static_cast<Dtype>(std_clamp<Dtype>(src_val, min_v, max_v));
+                            return clamp_cast<Dtype>(src_val, min_v, max_v);
                         }
                     }
                 }
@@ -225,10 +226,10 @@ namespace whyb {
                 [&](const Stype& src_val, const size_t& c) {
                 if constexpr (NeedClamp) {
                     if constexpr (HasAlpha) {
-                        return static_cast<Dtype>(std_clamp<Dtype>(src_val * alpha, min_v, max_v));
+                        return clamp_cast<Dtype>(src_val * alpha, min_v, max_v);
                     }
                     else {
-                        return static_cast<Dtype>(std_clamp<Dtype>(src_val, min_v, max_v));
+                        return clamp_cast<Dtype>(src_val, min_v, max_v);
                     }
                 }
                 else {
@@ -311,16 +312,19 @@ namespace whyb {
         }
 
     private:
-        template <typename T>
-        inline static T std_clamp(const T& value, const T& low, const T& high) {
-            // Check if the compiler supports C++17
-#if __cplusplus >= 201703L
-// If C++17 is supported, use std::clamp from the standard library
-            return (std::clamp)(value, low, high);
-#else
-// If C++17 is not supported but C++11 is, implement std::clamp using std::min and std::max
-            return ((std::max)(low, (std::min)(value, high)));
-#endif
+        /**
+        * @brief Clamps a value to [low, high] and then narrows it to Dtype
+        *
+        * Clamping happens in the common type of the value and the destination,
+        * so narrowing conversions (e.g. float -> uint8_t) never run on
+        * out-of-range values, which would be undefined behavior.
+        */
+        template <typename Dtype, typename VType>
+        inline static Dtype clamp_cast(const VType& value, const Dtype& low, const Dtype& high) {
+            using CommonType = typename std::common_type<VType, Dtype>::type;
+            return static_cast<Dtype>((std::clamp)(static_cast<CommonType>(value),
+                                                   static_cast<CommonType>(low),
+                                                   static_cast<CommonType>(high)));
         }
 
         /**

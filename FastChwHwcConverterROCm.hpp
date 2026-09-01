@@ -189,7 +189,8 @@ extern "C" __global__ void rocm_chw2hwc(const size_t c, const size_t h, const si
         const size_t pixel = (size_t)dy * w + (size_t)dx;
         const size_t dst_base = pixel * c;
         for (size_t ch = 0; ch < c; ++ch) {
-            dst[dst_base + ch] = static_cast<uint8_t>(src[pixel + ch * w * h] * alpha);
+            float value = src[pixel + ch * w * h] * alpha;
+            dst[dst_base + ch] = static_cast<uint8_t>(value < 0.0f ? 0.0f : (value > 255.0f ? 255.0f : value));
         }
     }
 }
