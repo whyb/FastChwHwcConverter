@@ -137,12 +137,13 @@ static const char* cudaSource = R"(
                                           const uint8_t* __restrict__ src, float* __restrict__ dst, const float alpha = 1.0f) {
       int dx = blockIdx.x * blockDim.x + threadIdx.x;
       int dy = blockIdx.y * blockDim.y + threadIdx.y;
-      int dz = blockIdx.z * blockDim.z + threadIdx.z;
-  
-      if (dx < w && dy < h && dz < c) {
-          size_t src_idx = dy * w * c + dx * c + dz;
-          size_t dst_idx = dz * w * h + dy * w + dx;
-          dst[dst_idx] = static_cast<float>(src[src_idx] * alpha);
+
+      if ((size_t)dx < w && (size_t)dy < h) {
+          const size_t pixel = (size_t)dy * w + (size_t)dx;
+          const size_t src_base = pixel * c;
+          for (size_t ch = 0; ch < c; ++ch) {
+              dst[pixel + ch * w * h] = static_cast<float>(src[src_base + ch] * alpha);
+          }
       }
   }
 
@@ -151,12 +152,13 @@ static const char* cudaSource = R"(
                                            const float* __restrict__ src, uint8_t* __restrict__ dst, const uint8_t alpha = 1) {
        int dx = blockIdx.x * blockDim.x + threadIdx.x;
        int dy = blockIdx.y * blockDim.y + threadIdx.y;
-       int dz = blockIdx.z * blockDim.z + threadIdx.z;
-   
-       if (dx < w && dy < h && dz < c) {
-           size_t src_idx = dz * w * h + dy * w + dx;
-           size_t dst_idx = dy * w * c + dx * c + dz;
-           dst[dst_idx] = static_cast<uint8_t>(src[src_idx] * alpha);
+
+       if ((size_t)dx < w && (size_t)dy < h) {
+           const size_t pixel = (size_t)dy * w + (size_t)dx;
+           const size_t dst_base = pixel * c;
+           for (size_t ch = 0; ch < c; ++ch) {
+               dst[dst_base + ch] = static_cast<uint8_t>(src[pixel + ch * w * h] * alpha);
+           }
        }
    }
 
