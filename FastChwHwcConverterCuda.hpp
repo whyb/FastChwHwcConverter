@@ -87,16 +87,12 @@ typedef CUresult(*cuLaunchKernel_t)(CUfunction, unsigned int, unsigned int, unsi
 typedef CUresult(*cuCtxSynchronize_t)(void);
 
 typedef CUresult(*cuMemAlloc_t)(CUdeviceptr*, size_t);
-typedef CUresult(*cuMemAllocAsync_t)(CUdeviceptr*, size_t, CUstream);
 typedef CUresult(*cuMemAllocHost_t)(void**, size_t);
 typedef CUresult(*cuMemFree_t)(CUdeviceptr);
-typedef CUresult(*cuMemFreeAsync_t)(CUdeviceptr, CUstream);
 typedef CUresult(*cuMemFreeHost_t)(void*);
 
 typedef CUresult(*cuMemcpyHtoD_t)(CUdeviceptr, const void*, size_t);
-typedef CUresult(*cuMemcpyHtoDAsync_t)(CUdeviceptr, const void*, size_t, CUstream);
 typedef CUresult(*cuMemcpyDtoH_t)(void*, CUdeviceptr, size_t);
-typedef CUresult(*cuMemcpyDtoHAsync_t)(void*, CUdeviceptr, size_t, CUstream);
 
 
 #ifdef _WIN32
@@ -121,15 +117,11 @@ inline cuModuleGetFunction_t cuModuleGetFunction = nullptr;
 inline cuLaunchKernel_t cuLaunchKernel = nullptr;
 inline cuCtxSynchronize_t cuCtxSynchronize = nullptr;
 inline cuMemAlloc_t cuMemAlloc = nullptr;
-inline cuMemAllocAsync_t cuMemAllocAsync = nullptr;
 inline cuMemAllocHost_t cuMemAllocHost = nullptr;
 inline cuMemFree_t cuMemFree = nullptr;
-inline cuMemFreeAsync_t cuMemFreeAsync = nullptr;
 inline cuMemFreeHost_t cuMemFreeHost = nullptr;
 inline cuMemcpyHtoD_t cuMemcpyHtoD = nullptr;
-inline cuMemcpyHtoDAsync_t cuMemcpyHtoDAsync = nullptr;
 inline cuMemcpyDtoH_t cuMemcpyDtoH = nullptr;
-inline cuMemcpyDtoHAsync_t cuMemcpyDtoHAsync = nullptr;
 
 static const char* cudaSource = R"(
   typedef unsigned char uint8_t;
@@ -217,24 +209,24 @@ namespace whyb {
             CUdeviceptr cuda_input_memory = 0;
             CUdeviceptr cuda_output_memory = 0;
             // alloc device memory
-            CUresult cuRes0 = cuMemAllocAsync(&cuda_input_memory, input_size, cudastream);
-            CUresult cuRes1 = cuMemAllocAsync(&cuda_output_memory, output_size, cudastream);
+            CUresult cuRes0 = cuMemAlloc(&cuda_input_memory, input_size);
+            CUresult cuRes1 = cuMemAlloc(&cuda_output_memory, output_size);
             if (cuRes0 != 0 || cuRes1 != 0) {
-                cuMemFreeAsync(cuda_input_memory, cudastream);
-                cuMemFreeAsync(cuda_output_memory, cudastream);
+                cuMemFree(cuda_input_memory);
+                cuMemFree(cuda_output_memory);
                 cpu::hwc2chw<uint8_t, float, true>(h, w, c, src, dst, alpha); return;
             }
             // copy host memory to device memory
             CUresult cuRes2 = cuMemcpyHtoD(cuda_input_memory, src, input_size);
             if (cuRes2 != 0) {
-                cuMemFreeAsync(cuda_input_memory, cudastream);
-                cuMemFreeAsync(cuda_output_memory, cudastream);
+                cuMemFree(cuda_input_memory);
+                cuMemFree(cuda_output_memory);
                 cpu::hwc2chw<uint8_t, float, true>(h, w, c, src, dst, alpha); return;
             }
             // call cuda function
             if (hwc2chwCUDAFun == nullptr) {
-                cuMemFreeAsync(cuda_input_memory, cudastream);
-                cuMemFreeAsync(cuda_output_memory, cudastream);
+                cuMemFree(cuda_input_memory);
+                cuMemFree(cuda_output_memory);
                 cpu::hwc2chw<uint8_t, float, true>(h, w, c, src, dst, alpha); return;
             }
             const unsigned int blockDimX = 32, blockDimY = 32, blockDimZ = 1;
@@ -252,25 +244,20 @@ namespace whyb {
                 blockDimX, blockDimY, blockDimZ,
                 0, nullptr, args1, nullptr);
             if (cuRes3 != 0) {
-                cuMemFreeAsync(cuda_input_memory, cudastream);
-                cuMemFreeAsync(cuda_output_memory, cudastream);
+                cuMemFree(cuda_input_memory);
+                cuMemFree(cuda_output_memory);
                 cpu::hwc2chw<uint8_t, float, true>(h, w, c, src, dst, alpha); return;
             }
-            // copy device memory to host memory
-            CUresult cuRes4 = cuMemcpyDtoHAsync(dst, cuda_output_memory, output_size, cudastream);
+            // copy device memory to host memory; the synchronous copy also
+            // guarantees the kernel has finished before the function returns
+            CUresult cuRes4 = cuMemcpyDtoH(dst, cuda_output_memory, output_size);
             if (cuRes4 != 0) {
-                cuMemFreeAsync(cuda_input_memory, cudastream);
-                cuMemFreeAsync(cuda_output_memory, cudastream);
+                cuMemFree(cuda_input_memory);
+                cuMemFree(cuda_output_memory);
                 cpu::hwc2chw<uint8_t, float, true>(h, w, c, src, dst, alpha); return;
             }
-            CUresult cuRes5 = cuMemFreeAsync(cuda_input_memory, cudastream);
-            CUresult cuRes6 = cuMemFreeAsync(cuda_output_memory, cudastream);
-            CUresult cuRes7 = cuStreamSynchronize(cudastream);
-            if (cuRes7 != 0) {
-                cuMemFreeAsync(cuda_input_memory, cudastream);
-                cuMemFreeAsync(cuda_output_memory, cudastream);
-                cpu::hwc2chw<uint8_t, float, true>(h, w, c, src, dst, alpha); return;
-            }
+            cuMemFree(cuda_input_memory);
+            cuMemFree(cuda_output_memory);
             return;
         }
 
@@ -300,24 +287,24 @@ namespace whyb {
             CUdeviceptr cuda_input_memory = 0;
             CUdeviceptr cuda_output_memory = 0;
             // alloc device memory
-            CUresult cuRes0 = cuMemAllocAsync(&cuda_input_memory, input_size, cudastream);
-            CUresult cuRes1 = cuMemAllocAsync(&cuda_output_memory, output_size, cudastream);
+            CUresult cuRes0 = cuMemAlloc(&cuda_input_memory, input_size);
+            CUresult cuRes1 = cuMemAlloc(&cuda_output_memory, output_size);
             if (cuRes0 != 0 || cuRes1 != 0) {
-                cuMemFreeAsync(cuda_input_memory, cudastream);
-                cuMemFreeAsync(cuda_output_memory, cudastream);
+                cuMemFree(cuda_input_memory);
+                cuMemFree(cuda_output_memory);
                 cpu::chw2hwc<float, uint8_t, true>(h, w, c, src, dst, alpha); return;
             }
             // copy host memory to device memory
-            CUresult cuRes2 = cuMemcpyHtoDAsync(cuda_input_memory, src, input_size, cudastream);
+            CUresult cuRes2 = cuMemcpyHtoD(cuda_input_memory, src, input_size);
             if (cuRes2 != 0) {
-                cuMemFreeAsync(cuda_input_memory, cudastream);
-                cuMemFreeAsync(cuda_output_memory, cudastream);
+                cuMemFree(cuda_input_memory);
+                cuMemFree(cuda_output_memory);
                 cpu::chw2hwc<float, uint8_t, true>(h, w, c, src, dst, alpha); return;
             }
             // call cuda function
             if (chw2hwcCUDAFun == nullptr) {
-                cuMemFreeAsync(cuda_input_memory, cudastream);
-                cuMemFreeAsync(cuda_output_memory, cudastream);
+                cuMemFree(cuda_input_memory);
+                cuMemFree(cuda_output_memory);
                 cpu::chw2hwc<float, uint8_t, true>(h, w, c, src, dst, alpha); return;
             }
             const unsigned int blockDimX = 32, blockDimY = 32, blockDimZ = 1;
@@ -335,25 +322,20 @@ namespace whyb {
                 blockDimX, blockDimY, blockDimZ,
                 0, nullptr, args, nullptr);
             if (cuRes3 != 0) {
-                cuMemFreeAsync(cuda_input_memory, cudastream);
-                cuMemFreeAsync(cuda_output_memory, cudastream);
+                cuMemFree(cuda_input_memory);
+                cuMemFree(cuda_output_memory);
                 cpu::chw2hwc<float, uint8_t, true>(h, w, c, src, dst, alpha); return;
             }
-            // copy device memory to host memory
-            CUresult cuRes4 = cuMemcpyDtoHAsync(dst, cuda_output_memory, output_size, cudastream);
+            // copy device memory to host memory; the synchronous copy also
+            // guarantees the kernel has finished before the function returns
+            CUresult cuRes4 = cuMemcpyDtoH(dst, cuda_output_memory, output_size);
             if (cuRes4 != 0) {
-                cuMemFreeAsync(cuda_input_memory, cudastream);
-                cuMemFreeAsync(cuda_output_memory, cudastream);
+                cuMemFree(cuda_input_memory);
+                cuMemFree(cuda_output_memory);
                 cpu::chw2hwc<float, uint8_t, true>(h, w, c, src, dst, alpha); return;
             }
-            CUresult cuRes5 = cuMemFreeAsync(cuda_input_memory, cudastream);
-            CUresult cuRes6 = cuMemFreeAsync(cuda_output_memory, cudastream);
-            CUresult cuRes7 = cuStreamSynchronize(cudastream);
-            if (cuRes7 != 0) {
-                cuMemFreeAsync(cuda_input_memory, cudastream);
-                cuMemFreeAsync(cuda_output_memory, cudastream);
-                cpu::chw2hwc<float, uint8_t, true>(h, w, c, src, dst, alpha); return;
-            }
+            cuMemFree(cuda_input_memory);
+            cuMemFree(cuda_output_memory);
             return;
         }
 
@@ -610,23 +592,19 @@ namespace whyb {
             cuLaunchKernel = (cuLaunchKernel_t)(dlManager->getFunction(driver_dll, "cuLaunchKernel"));
             cuCtxSynchronize = (cuCtxSynchronize_t)(dlManager->getFunction(driver_dll, "cuCtxSynchronize"));
             cuMemAlloc = (cuMemAlloc_t)(dlManager->getFunction(driver_dll, "cuMemAlloc_v2"));
-            cuMemAllocAsync = (cuMemAllocAsync_t)(dlManager->getFunction(driver_dll, "cuMemAllocAsync"));
             cuMemAllocHost = (cuMemAllocHost_t)(dlManager->getFunction(driver_dll, "cuMemAllocHost_v2"));
             cuMemFree = (cuMemFree_t)(dlManager->getFunction(driver_dll, "cuMemFree_v2"));
-            cuMemFreeAsync = (cuMemFreeAsync_t)(dlManager->getFunction(driver_dll, "cuMemFreeAsync"));
             cuMemFreeHost = (cuMemFreeHost_t)(dlManager->getFunction(driver_dll, "cuMemFreeHost"));
             cuMemcpyHtoD = (cuMemcpyHtoD_t)(dlManager->getFunction(driver_dll, "cuMemcpyHtoD_v2"));
-            cuMemcpyHtoDAsync = (cuMemcpyHtoDAsync_t)(dlManager->getFunction(driver_dll, "cuMemcpyHtoDAsync_v2"));
             cuMemcpyDtoH = (cuMemcpyDtoH_t)(dlManager->getFunction(driver_dll, "cuMemcpyDtoH_v2"));
-            cuMemcpyDtoHAsync = (cuMemcpyDtoHAsync_t)(dlManager->getFunction(driver_dll, "cuMemcpyDtoHAsync_v2"));
 
             if (!cuInit || !cuDeviceGet || !cuCtxCreate || !cuCtxDestroy ||
                 !cuStreamCreate || !cuStreamDestroy || !cuStreamSynchronize ||
                 !cuModuleLoadDataEx || !cuModuleUnload || !cuModuleGetFunction ||
                 !cuLaunchKernel || !cuCtxSynchronize ||
-                !cuMemAlloc || !cuMemAllocAsync || !cuMemAllocHost ||
-                !cuMemFree || !cuMemFreeAsync || !cuMemFreeHost ||
-                !cuMemcpyHtoD || !cuMemcpyHtoDAsync || !cuMemcpyDtoH || !cuMemcpyDtoHAsync) {
+                !cuMemAlloc || !cuMemAllocHost ||
+                !cuMemFree || !cuMemFreeHost ||
+                !cuMemcpyHtoD || !cuMemcpyDtoH) {
                 std::cerr << "Failed to load one or more CUDA Driver API functions." << std::endl;
                 return false;
             }
