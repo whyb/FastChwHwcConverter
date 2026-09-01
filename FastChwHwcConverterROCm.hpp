@@ -373,7 +373,7 @@ namespace whyb {
             void* args[] = { &arg_c_val, &arg_h_val, &arg_w_val, &rocm_input_memory, &rocm_output_memory, &arg_alpha_val };
 
             hipError_t hipRes3 = hipModuleLaunchKernel(
-                hwc2chwROCmFun,
+                chw2hwcROCmFun,
                 gridDimX, gridDimY, gridDimZ,
                 blockDimX, blockDimY, blockDimZ,
                 0, rocmstream, args, nullptr);
@@ -474,7 +474,7 @@ namespace whyb {
             uint8_t arg_alpha_val = alpha;
             void* args[] = { &arg_c_val, &arg_h_val, &arg_w_val, &src, &dst, &arg_alpha_val };
             hipError_t hipRes0 = hipModuleLaunchKernel(
-                hwc2chwROCmFun,
+                chw2hwcROCmFun,
                 gridDimX, gridDimY, gridDimZ,
                 blockDimX, blockDimY, blockDimZ,
                 0, rocmstream, args, nullptr);
