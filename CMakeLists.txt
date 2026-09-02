@@ -17,6 +17,7 @@ option(BUILD_CUDA_BENCHMARK "Build NVIDIA CUDA benchmark target" ON)
 option(BUILD_ROCM_BENCHMARK "Build AMD ROCm benchmark target" ON)
 option(BUILD_EXAMPLE_OPENCV "Build example-opencv target" OFF)
 option(USE_TBB "Use Intel oneTBB for parallel programming" OFF)
+option(BUILD_VULKAN_BENCHMARK "Build Vulkan benchmark target" ON)
 
 # Check for OpenMP support if the option is enabled
 if(USE_OPENMP)
@@ -42,6 +43,19 @@ if(USE_TBB)
     set(TBB_LIBS TBB::tbb)
 else()
     set(TBB_LIBS "")
+endif()
+
+# Find Vulkan SDK (optional). The Vulkan backend compiles GLSL with the
+# glslang library and loads vulkan-1.dll at runtime, so the SDK is only
+# required to build the Vulkan benchmark target. If the SDK is not found,
+# the Vulkan benchmark is skipped.
+if(BUILD_VULKAN_BENCHMARK)
+    find_package(Vulkan QUIET)
+    if(Vulkan_FOUND)
+        message(STATUS "Found Vulkan SDK: ${Vulkan_INCLUDE_DIRS}")
+    else()
+        message(STATUS "Vulkan SDK not found. BUILD_VULKAN_BENCHMARK will be skipped.")
+    endif()
 endif()
 
 # Find OpenCV library
@@ -74,6 +88,13 @@ if(BUILD_ROCM_BENCHMARK)
     add_executable(rocm_benchmark DynamicLibraryManager.hpp FastChwHwcConverterROCm.hpp test/rocm_benchmark.cpp)
     target_include_directories(rocm_benchmark PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${TBB_INCLUDE_DIRS})
     target_link_libraries(rocm_benchmark PRIVATE ${TBB_LIBS})
+endif()
+
+if(BUILD_VULKAN_BENCHMARK AND Vulkan_FOUND)
+    add_executable(vulkan_benchmark DynamicLibraryManager.hpp FastChwHwcConverterVulkan.hpp test/vulkan_benchmark.cpp)
+    target_include_directories(vulkan_benchmark PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${TBB_INCLUDE_DIRS})
+    target_compile_options(vulkan_benchmark PRIVATE ${OpenMP_FLAGS})
+    target_link_libraries(vulkan_benchmark PRIVATE ${TBB_LIBS})
 endif()
 
 if(BUILD_EXAMPLE_OPENCV)

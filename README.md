@@ -24,6 +24,14 @@ FastChwHwcConverterROCm.hpp is a high-performance, GPU-accelerated library for c
 The functions support passing in ROCm device memory and host memory parameters.
 
 
+### GPU Acceleration (Vulkan)
+FastChwHwcConverterVulkan.hpp is a high-performance, GPU-accelerated library for converting image data formats between **HWC** and **CHW**, using the Vulkan compute API. Like the CUDA and ROCm libraries, it does not require the Vulkan SDK headers or static linking: at runtime it loads `vulkan-1.dll` / `libvulkan.so.1` (or `libMoltenVK.dylib` on macOS) and uses the **glslang** shared library (bundled with the Vulkan Runtime/SDK) to compile the embedded GLSL compute shaders into SPIR-V on first use. It automatically picks the physical device with the strongest compute capability (discrete GPU first) and the most device-local memory.
+
+
+**Note**: If your operating environment does not support Vulkan or does not meet the conditions for using Vulkan acceleration, it will automatically fall back to the CPU (OpenMP/C++ Thread/Intel oneTBB) for processing.
+The functions support passing in Vulkan buffer (device memory) and host memory parameters. The Vulkan backend is only enabled when the Vulkan SDK is found by CMake (`BUILD_VULKAN_BENCHMARK`), otherwise it is skipped.
+
+
 Any similar type conversion code you find another project on GitHub will most likely only achieve performance close to the speed of [single-thread execution](#benchmark-performance-timing-results).
 
 ## Table of Contents
@@ -31,6 +39,7 @@ Any similar type conversion code you find another project on GitHub will most li
   - [Multi-Core CPU Implementation (C++Thread-OpenMP-oneTBB)](#multi-core-cpu-implementation-cthread-openmp-onetbb)
   - [GPU Acceleration (NVIDIA CUDA)](#gpu-acceleration-nvidia-cuda)
   - [GPU Acceleration (AMD ROCm)](#gpu-acceleration-amd-rocm)
+  - [GPU Acceleration (Vulkan)](#gpu-acceleration-vulkan)
 - [The difference between CHW and HWC](#the-difference-between-chw-and-hwc)
   - [CHW Format](#chw-format)
   - [HWC Format](#hwc-format)
@@ -41,6 +50,7 @@ Any similar type conversion code you find another project on GitHub will most li
   - [for CPU (OpenMP)](#for-cpu-openmp)
   - [for CPU (oneTBB)](#for-cpu-onetbb)
   - [for GPU (CUDA or ROCm)](#for-gpu-cuda-or-rocm)
+  - [for GPU (Vulkan)](#for-gpu-vulkan)
 - [Requirements](#requirements)
 - [API Documents](#api-documents)
   - [HWC -> CHW (CPU)](#hwc-to-chw-conversion-cpu)
@@ -49,6 +59,8 @@ Any similar type conversion code you find another project on GitHub will most li
   - [CHW -> HWC (CUDA)](#chw-to-hwc-conversion-cuda)
   - [HWC -> CHW (ROCm)](#hwc-to-chw-conversion-rocm)
   - [CHW -> HWC (ROCm)](#chw-to-hwc-conversion-rocm)
+  - [HWC -> CHW (Vulkan)](#hwc-to-chw-conversion-vulkan)
+  - [CHW -> HWC (Vulkan)](#chw-to-hwc-conversion-vulkan)
   - [Example](#example)
 - [Benchmark Performance Timing Results](#benchmark-performance-timing-results)
 - [Contact](#contact)
@@ -164,6 +176,30 @@ Usually you also need to copy the `nvrtc64_***_0.dll` `nvrtc-builtins64_***` (fo
 
 In addition, you need to download and install the latest version of the driver from the [NVIDIA drivers website](https://www.nvidia.com/Download/index.aspx) or [AMD drivers website](https://www.amd.com/en/support). Because this project will dynamically load driver file: `nvcuda.dll` (for Windows CUDA) or `amdhip64_6.dll` (for Windows ROCm) or `libcuda.so` (for Linux CUDA) or `libamdhip64.so` (for Linux ROCm).
 
+### for GPU (Vulkan)
+
+[Vulkan SDK Official Website](https://vulkan.lunarg.com/sdk/home)
+
+ * Option 1:
+
+    ```shell
+    cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_VULKAN_BENCHMARK=ON
+
+    cmake --build build --config Release
+    ```
+
+   The Vulkan benchmark target is only generated when the Vulkan SDK is found by `find_package(Vulkan)` (set `Vulkan_INCLUDE_DIR` / `Vulkan_LIBRARY` or the `VULKAN_SDK` environment variable if it is not detected automatically). If the SDK is not found, the Vulkan target is skipped.
+
+ * Option 2:
+
+    Simply include the header file `FastChwHwcConverterVulkan.hpp` in your project:
+
+    ```cpp
+    #include "FastChwHwcConverterVulkan.hpp"
+    ```
+
+At runtime the backend loads `vulkan-1.dll` / `libvulkan.so.1` (or `libMoltenVK.dylib` on macOS) and the `glslang` shared library (searched next to the executable, in `$VULKAN_SDK/Bin` on Windows or `$VULKAN_SDK/lib` on Linux/macOS, then in the system paths) to compile the GLSL compute shaders into SPIR-V. The functions support passing in Vulkan buffer (device memory) and host memory parameters.
+
 ## Requirements
 * C++17 or later
 * OpenMP support (optional, set USE_OPENMP to ON for high performance)
@@ -172,6 +208,7 @@ In addition, you need to download and install the latest version of the driver f
 * OpenCV v4.0 or later (optional, if BUILD_EXAMPLE_OPENCV is ON)
 * CUDA 11.2+ driver (optional, if you want to use CUDA acceleration, And NVIDIA GPU's compute capability > 3.5, more details see [here](https://developer.nvidia.com/cuda-gpus). )
 * ROCm 5.0+ driver (optional, if you want to use ROCm acceleration, hardware and system requirements see [here](https://rocm.docs.amd.com/projects/install-on-windows/en/latest/reference/system-requirements.html). )
+* Vulkan 1.0 support (optional, if you want to use Vulkan acceleration, see [here](https://vulkan.lunarg.com/sdk/home). )
 
 ## API Documents
 
@@ -315,13 +352,78 @@ Parameters:
 
 **Note**: Please call whyb::amd::init() before the first use, and call whyb::amd::release() to release it after confirming that it will not be used anymore.
 
+### HWC to CHW Conversion (Vulkan)
+The `whyb::vulkan::hwc2chw()` function converts image data from HWC format to CHW format.
+
+Host memory overload:
+```cpp
+void hwc2chw(
+    const size_t h, const size_t w, const size_t c,
+    const uint8_t* src, float* dst,
+    const float alpha = 1.f/255.f
+);
+```
+
+Device memory overload:
+```cpp
+void hwc2chw(
+    const size_t h, const size_t w, const size_t c,
+    const VkBuffer src, const VkBuffer dst,
+    const float alpha = 1.f/255.f
+);
+```
+
+Parameters:
+
+* `h`: Height of the image.
+* `w`: Width of the image.
+* `c`: Number of channels.
+* `src`: Source data in HWC format (host memory or Vulkan device buffer).
+* `dst`: Destination data in CHW format (host memory or Vulkan device buffer).
+* `alpha`: Scaling factor (default is 1.f/255.f).
+
+**Note**: Please call whyb::vulkan::init() before the first use, and call whyb::vulkan::release() to release it after confirming that it will not be used anymore. The host memory overload falls back to the CPU implementation automatically if the Vulkan backend is not initialized. Device buffers can be allocated with whyb::vulkan::createDeviceBuffer() and must be released with whyb::vulkan::destroyDeviceBuffer().
+
+### CHW to HWC Conversion (Vulkan)
+The `whyb::vulkan::chw2hwc()` function converts image data from CHW format to HWC format.
+
+Host memory overload:
+```cpp
+void chw2hwc(
+    const size_t c, const size_t h, const size_t w,
+    const float* src, uint8_t* dst,
+    const uint8_t alpha = 255.0f
+);
+```
+
+Device memory overload:
+```cpp
+void chw2hwc(
+    const size_t c, const size_t h, const size_t w,
+    const VkBuffer src, const VkBuffer dst,
+    const uint8_t alpha = 255.0f
+);
+```
+
+Parameters:
+
+* `c`: Number of channels.
+* `h`: Height of the image.
+* `w`: Width of the image.
+* `src`: Source data in CHW format (host memory or Vulkan device buffer).
+* `dst`: Destination data in HWC format (host memory or Vulkan device buffer).
+* `alpha`: Scaling factor (default is 255.0f).
+
+**Note**: Please call whyb::vulkan::init() before the first use, and call whyb::vulkan::release() to release it after confirming that it will not be used anymore. The host memory overload falls back to the CPU implementation automatically if the Vulkan backend is not initialized.
+
 ### Example
-This example code(**test/example.cpp**) demonstrates how to use the FastChwHwcConverter and FastChwHwcConverterCuda library to convert image data from HWC format to CHW format, and then back to HWC format after AI inference.
+This example code(**test/example.cpp**) demonstrates how to use the CPU, NVIDIA CUDA, AMD ROCm and Vulkan backends to convert image data from HWC format to CHW format, and then back to HWC format after AI inference.
 
 ```cpp
 #include "FastChwHwcConverter.hpp"
 #include "FastChwHwcConverterCuda.hpp"
 #include "FastChwHwcConverterROCm.hpp"
+#include "FastChwHwcConverterVulkan.hpp"
 #include <vector>
 #include <cstdint>
 #include <iostream>
@@ -414,10 +516,42 @@ void rocm_example()
     std::cout << "rocm example done" << std::endl;
 }
 
+
+void vulkan_example()
+{
+    if (!whyb::vulkan::init()) { return; }
+    const size_t c = 3;
+    const size_t w = 1920;
+    const size_t h = 1080;
+
+    // step 1. Defining input and output
+    const size_t pixel_size = h * w * c;
+    std::vector<uint8_t> src_uint8(pixel_size); // Source data(hwc)
+    std::vector<float> src_float(pixel_size); // Source data(chw)
+
+    std::vector<float> out_float(pixel_size); // Inference output data(chw)
+    std::vector<uint8_t> out_uint8(pixel_size); // Inference output data(hwc)
+
+    // step 2. Load image data to src_uint8(8U3C)
+
+    // step 3. Convert HWC(Height, Width, Channels) to CHW(Channels, Height, Width)
+    whyb::vulkan::hwc2chw(h, w, c, (uint8_t*)src_uint8.data(), (float*)src_float.data(), 1.f / 255.f);
+
+    // step 4. Do AI inference
+    // input: src_float ==infer==> output: out_float
+
+    // step 5. Convert CHW(Channels, Height, Width) to HWC(Height, Width, Channels)
+    whyb::vulkan::chw2hwc(c, h, w, (float*)out_float.data(), (uint8_t*)out_uint8.data(), 255.f);
+
+    whyb::vulkan::release();
+    std::cout << "vulkan example done" << std::endl;
+}
+
 int main() {
     cpu_example();
     cuda_example();
     rocm_example();
+    vulkan_example();
     return 0;
 }
 ```
@@ -425,40 +559,41 @@ If you are using OpenCV's `cv::Mat`, Please refer to the **test/example-opencv.c
 
 ## Benchmark Performance Timing Results
 
-The table below shows the benchmark performance timing for different image dimensions, channels, and processing configurations.
+The table below shows the benchmark performance timing for different image dimensions, channels, and processing configurations. The GPU backends (CUDA / ROCm / Vulkan) are measured on device memory, while the CPU columns are measured on host memory.
 
-    RAM: DDR5 2400MHz 4x32-bit channels
+    RAM: DDR5 4800MHz 4x16GB
     CPU(OpenMP): Intel(R) Core(TM) i7-13700K
     GPU(CUDA): NVIDIA GeForce RTX 3060 Ti
-    GPU(ROCm): AMD Radeon RX 6900 XT
+    GPU(ROCm): AMD Radeon RX 7900 XTX
+    GPU(Vulkan): AMD Radeon RX 7900 XTX
 
-|             |CPU(Single)|CPU(Single)|CPU(OpenMP)|CPU(OpenMP)|   CUDA  |   CUDA  |   ROCm  |   ROCm  |
-|-------------|---------|----------|-----------|-----------|---------|---------|---------|---------|
-|  W x H x C  | hwc2chw | chw2hwc  | hwc2chw   | chw2hwc   | hwc2chw | chw2hwc | hwc2chw | chw2hwc |
-| 426x240x1 | 0.097ms | 0.110ms  | 0.113ms   | 0.030ms   | 0.022ms | 0.019ms | 0.059ms | 0.053ms |
-| 426x240x3 | 0.331ms | 0.314ms  | 0.061ms   | 0.068ms   | 0.022ms | 0.019ms | 0.062ms | 0.059ms |
-| 426x240x4 | 0.439ms | 0.415ms  | 0.082ms   | 0.082ms   | 0.020ms | 0.019ms | 0.062ms | 0.061ms |
-| 640x360x1 | 0.217ms | 0.236ms  | 0.048ms   | 0.052ms   | 0.022ms | 0.021ms | 0.062ms | 0.061ms |
-| 640x360x3 | 0.743ms | 0.705ms  | 0.147ms   | 0.140ms   | 0.036ms | 0.021ms | 0.060ms | 0.059ms |
-| 640x360x4 | 0.881ms | 0.921ms  | 0.219ms   | 0.203ms   | 0.025ms | 0.021ms | 0.057ms | 0.053ms |
-| 854x480x1 | 0.393ms | 0.415ms  | 0.094ms   | 0.089ms   | 0.025ms | 0.024ms | 0.063ms | 0.060ms |
-| 854x480x3 | 1.328ms | 1.269ms  | 0.250ms   | 0.232ms   | 0.029ms | 0.024ms | 0.052ms | 0.052ms |
-| 854x480x4 | 1.717ms | 1.670ms  | 0.263ms   | 0.262ms   | 0.034ms | 0.027ms | 0.054ms | 0.051ms |
-| 1280x720x1 | 0.873ms | 0.937ms  | 0.130ms   | 0.180ms   | 0.053ms | 0.040ms | 0.060ms | 0.052ms |
-| 1280x720x3 | 2.877ms | 2.828ms  | 0.449ms   | 0.457ms   | 0.052ms | 0.042ms | 0.061ms | 0.056ms |
-| 1280x720x4 | 3.558ms | 3.848ms  | 0.719ms   | 0.616ms   | 0.054ms | 0.045ms | 0.062ms | 0.056ms |
-| 1920x1080x1 | 1.949ms | 2.136ms  | 0.374ms   | 0.342ms   | 0.081ms | 0.067ms | 0.079ms | 0.060ms |
-| 1920x1080x3 | 6.587ms | 6.469ms  | 1.000ms   | 0.672ms   | 0.087ms | 0.074ms | 0.080ms | 0.064ms |
-| 1920x1080x4 | 8.144ms | 8.615ms  | 0.832ms   | 0.914ms   | 0.103ms | 0.080ms | 0.077ms | 0.057ms |
-| 2560x1440x1 | 3.530ms | 3.800ms  | 0.423ms   | 0.476ms   | 0.114ms | 0.116ms | 0.094ms | 0.074ms |
-| 2560x1440x3 | 11.47ms | 11.611ms | 1.323ms   | 1.169ms   | 0.142ms | 0.127ms | 0.089ms | 0.070ms |
-| 2560x1440x4 | 14.14ms | 15.273ms | 2.391ms   | 2.567ms   | 0.154ms | 0.136ms | 0.094ms | 0.075ms |
-| 3840x2160x1 | 7.976ms | 8.494ms  | 1.103ms   | 1.387ms   | 0.234ms | 0.227ms | 0.129ms | 0.097ms |
-| 3840x2160x3 | 26.30ms | 25.824ms | 5.339ms   | 4.438ms   | 0.307ms | 0.253ms | 0.132ms | 0.096ms |
-| 3840x2160x4 | 32.94ms | 34.718ms | 5.805ms   | 4.514ms   | 0.323ms | 0.272ms | 0.131ms | 0.097ms |
-| 7680x4320x1 | 31.54ms | 34.100ms | 5.742ms   | 4.976ms   | 0.836ms | 0.741ms | 0.484ms | 0.214ms |
-| 7680x4320x3 | 102.87ms| 102.42ms| 19.261ms  | 17.294ms  | 1.057ms | 0.890ms | 0.621ms | 0.222ms |
-| 7680x4320x4 | 133.08ms| 136.31ms| 23.398ms  | 18.445ms  | 1.144ms | 1.013ms | 0.686ms | 0.220ms |
+|             |CPU(Single)|CPU(Single)|CPU(OpenMP)|CPU(OpenMP)|   CUDA  |   CUDA  |   ROCm  |   ROCm  |  Vulkan |  Vulkan |
+|-------------|----------|----------|----------|----------|---------|---------|---------|---------|---------|---------|
+|  W x H x C  |  hwc2chw |  chw2hwc |  hwc2chw |  chw2hwc |  hwc2chw|  chw2hwc|  hwc2chw|  chw2hwc| hwc2chw | chw2hwc |
+| 426x240x1 | 0.100ms | 0.117ms | 0.127ms | 0.029ms | 0.017ms | 0.018ms | 0.179ms | 0.177ms | 0.051ms | 0.049ms |
+| 426x240x3 | 0.359ms | 0.402ms | 0.067ms | 0.068ms | 0.019ms | 0.019ms | 0.179ms | 0.179ms | 0.046ms | 0.046ms |
+| 426x240x4 | 0.439ms | 0.539ms | 0.076ms | 0.080ms | 0.019ms | 0.019ms | 0.181ms | 0.187ms | 0.048ms | 0.048ms |
+| 640x360x1 | 0.227ms | 0.262ms | 0.050ms | 0.051ms | 0.020ms | 0.020ms | 0.185ms | 0.184ms | 0.048ms | 0.048ms |
+| 640x360x3 | 0.753ms | 0.878ms | 0.083ms | 0.072ms | 0.024ms | 0.027ms | 0.200ms | 0.198ms | 0.044ms | 0.042ms |
+| 640x360x4 | 0.973ms | 1.227ms | 0.085ms | 0.093ms | 0.025ms | 0.025ms | 0.205ms | 0.201ms | 0.059ms | 0.043ms |
+| 854x480x1 | 0.402ms | 0.470ms | 0.048ms | 0.047ms | 0.022ms | 0.022ms | 0.202ms | 0.201ms | 0.044ms | 0.048ms |
+| 854x480x3 | 1.326ms | 1.562ms | 0.136ms | 0.135ms | 0.031ms | 0.038ms | 0.207ms | 0.166ms | 0.062ms | 0.046ms |
+| 854x480x4 | 1.733ms | 2.170ms | 0.236ms | 0.277ms | 0.035ms | 0.036ms | 0.133ms | 0.131ms | 0.045ms | 0.047ms |
+| 1280x720x1 | 0.898ms | 1.048ms | 0.174ms | 0.127ms | 0.039ms | 0.040ms | 0.131ms | 0.133ms | 0.044ms | 0.047ms |
+| 1280x720x3 | 3.058ms | 3.506ms | 0.288ms | 0.285ms | 0.054ms | 0.068ms | 0.138ms | 0.136ms | 0.059ms | 0.061ms |
+| 1280x720x4 | 3.934ms | 4.988ms | 0.388ms | 0.381ms | 0.063ms | 0.060ms | 0.139ms | 0.138ms | 0.058ms | 0.058ms |
+| 1920x1080x1 | 2.052ms | 2.392ms | 0.247ms | 0.221ms | 0.068ms | 0.070ms | 0.146ms | 0.143ms | 0.058ms | 0.057ms |
+| 1920x1080x3 | 6.763ms | 7.951ms | 0.718ms | 0.701ms | 0.102ms | 0.129ms | 0.149ms | 0.115ms | 0.058ms | 0.067ms |
+| 1920x1080x4 | 8.738ms | 11.238ms | 1.068ms | 0.968ms | 0.124ms | 0.117ms | 0.116ms | 0.111ms | 0.064ms | 0.074ms |
+| 2560x1440x1 | 3.674ms | 4.238ms | 0.505ms | 0.394ms | 0.108ms | 0.114ms | 0.117ms | 0.118ms | 0.059ms | 0.061ms |
+| 2560x1440x3 | 11.905ms | 14.097ms | 1.233ms | 1.356ms | 0.170ms | 0.207ms | 0.115ms | 0.113ms | 0.072ms | 0.084ms |
+| 2560x1440x4 | 15.574ms | 20.065ms | 2.055ms | 2.093ms | 0.213ms | 0.199ms | 0.113ms | 0.114ms | 0.079ms | 0.097ms |
+| 3840x2160x1 | 8.295ms | 9.449ms | 1.491ms | 1.476ms | 0.235ms | 0.235ms | 0.113ms | 0.113ms | 0.069ms | 0.074ms |
+| 3840x2160x3 | 26.690ms | 31.392ms | 3.907ms | 3.340ms | 0.367ms | 0.467ms | 0.298ms | 0.238ms | 0.231ms | 0.245ms |
+| 3840x2160x4 | 35.655ms | 46.030ms | 5.580ms | 4.854ms | 0.449ms | 0.425ms | 0.393ms | 0.306ms | 0.298ms | 0.303ms |
+| 7680x4320x1 | 33.288ms | 38.398ms | 5.516ms | 3.910ms | 0.885ms | 0.878ms | 0.324ms | 0.310ms | 0.269ms | 0.305ms |
+| 7680x4320x3 | 107.704ms | 125.577ms | 17.621ms | 13.476ms | 1.410ms | 1.792ms | 1.013ms | 0.755ms | 0.781ms | 0.848ms |
+| 7680x4320x4 | 140.619ms | 182.024ms | 21.929ms | 17.257ms | 1.713ms | 1.618ms | 1.475ms | 0.990ms | 1.040ms | 1.083ms |
 
 ## Contact
 For any questions or suggestions, please feel free to open an issue or reach out to me.

@@ -1,6 +1,6 @@
 /*
  * This file is part of [https://github.com/whyb/FastChwHwcConverter].
- * Copyright (C) [2025] [張小凡](https://github.com/whyb)
+ * Copyright (C) [2025-2026] [張小凡](https://github.com/whyb)
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public

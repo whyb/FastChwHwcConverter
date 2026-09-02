@@ -25,6 +25,15 @@ jobs:
         sudo apt-get install -y cmake
         sudo apt-get install -y clang lld libc++-dev libc++abi-dev libclang-rt-dev
 
+    - name: Install Vulkan SDK
+      run: |
+        mkdir -p "$RUNNER_TEMP/VulkanSDK"
+        curl -fL -o "$RUNNER_TEMP/VulkanSDK/vulkansdk.tar.xz" "https://sdk.lunarg.com/sdk/download/1.4.357.1/linux/vulkansdk-linux-x86_64-1.4.357.1.tar.xz"
+        tar -xf "$RUNNER_TEMP/VulkanSDK/vulkansdk.tar.xz" -C "$RUNNER_TEMP/VulkanSDK"
+        rm -f "$RUNNER_TEMP/VulkanSDK/vulkansdk.tar.xz"
+        VULKAN_SDK_DIR="$(find "$RUNNER_TEMP/VulkanSDK" -maxdepth 3 -type d -name x86_64 | head -n 1)"
+        echo "VULKAN_SDK=${VULKAN_SDK_DIR}" >> "$GITHUB_ENV"
+
     - name: CMake Configure & Generate (x64)
       run: |
         cmake -S . -B build-x64 \
@@ -36,6 +45,9 @@ jobs:
           -DBUILD_BENCHMARK:BOOL="1" \
           -DBUILD_CUDA_BENCHMARK:BOOL="1" \
           -DBUILD_ROCM_BENCHMARK:BOOL="1" \
+          -DBUILD_VULKAN_BENCHMARK:BOOL="1" \
+          -DVulkan_INCLUDE_DIR="${VULKAN_SDK}/include" \
+          -DVulkan_LIBRARY="${VULKAN_SDK}/lib/VulkanLoader/lib/libvulkan.so" \
           -DUSE_OPENMP:BOOL="0" \
           -DUSE_TBB:BOOL="0"
 
@@ -48,8 +60,12 @@ jobs:
     - name: Check linked libraries
       run: ldd ./build-x64/example || true
 
+    - name: Copy Vulkan runtime libraries next to the binaries
+      run: |
+        cp -L "$VULKAN_SDK/lib/libglslang.so" ./build-x64/libglslang.so
+
     - name: Zip binary files
-      run: zip ./bin-linux-gcc-x64.zip ./build-x64/example ./build-x64/benchmark ./build-x64/cuda_benchmark ./build-x64/rocm_benchmark
+      run: zip ./bin-linux-gcc-x64.zip ./build-x64/example ./build-x64/benchmark ./build-x64/cuda_benchmark ./build-x64/rocm_benchmark ./build-x64/vulkan_benchmark ./build-x64/libglslang.so
 
     - name: Archive Linux build artifacts
       uses: actions/upload-artifact@v4
@@ -81,6 +97,7 @@ jobs:
           -DBUILD_BENCHMARK:BOOL="1" \
           -DBUILD_CUDA_BENCHMARK:BOOL="1" \
           -DBUILD_ROCM_BENCHMARK:BOOL="1" \
+          -DBUILD_VULKAN_BENCHMARK:BOOL="0" \
           -DUSE_OPENMP:BOOL="0" \
           -DUSE_TBB:BOOL="0"
 
@@ -109,14 +126,38 @@ jobs:
       run: |
         brew install cmake zip
 
+    - name: Install Vulkan SDK
+      run: |
+        mkdir -p "$RUNNER_TEMP/VulkanSDK"
+        curl -fL -o "$RUNNER_TEMP/vulkansdk-macos.zip" "https://sdk.lunarg.com/sdk/download/1.4.357.1/mac/vulkansdk-macos-1.4.357.1.zip"
+        unzip -q "$RUNNER_TEMP/vulkansdk-macos.zip" -d "$RUNNER_TEMP"
+        sudo "$RUNNER_TEMP/vulkansdk-macOS-1.4.357.1.app/Contents/MacOS/vulkansdk-macOS-1.4.357.1" --root "$RUNNER_TEMP/VulkanSDK" --accept-licenses --default-answer --confirm-command install
+        echo "VULKAN_SDK=$RUNNER_TEMP/VulkanSDK/macOS" >> "$GITHUB_ENV"
+        rm -rf "$RUNNER_TEMP/vulkansdk-macOS-1.4.357.1.app" "$RUNNER_TEMP/vulkansdk-macos.zip"
+
     - name: CMake Configure & Generate(x64)
-      run: cmake -S . -B build-x64 -DBUILD_EXAMPLE:BOOL="1" -DBUILD_EXAMPLE_OPENCV:BOOL="0" -DBUILD_BENCHMARK:BOOL="1" -DBUILD_CUDA_BENCHMARK:BOOL="0" -DBUILD_ROCM_BENCHMARK:BOOL="0" -DUSE_OPENMP:BOOL="0" -DUSE_TBB:BOOL="0"
+      run: cmake -S . -B build-x64 -DBUILD_EXAMPLE:BOOL="1" -DBUILD_EXAMPLE_OPENCV:BOOL="0" -DBUILD_BENCHMARK:BOOL="1" -DBUILD_CUDA_BENCHMARK:BOOL="0" -DBUILD_ROCM_BENCHMARK:BOOL="0" -DBUILD_VULKAN_BENCHMARK:BOOL="1" -DVulkan_INCLUDE_DIR="$VULKAN_SDK/include" -DVulkan_LIBRARY="$(ls "$VULKAN_SDK"/lib/libvulkan*.dylib 2>/dev/null | head -n 1)" -DUSE_OPENMP:BOOL="0" -DUSE_TBB:BOOL="0"
 
     - name: Build(x64)
       run: cmake --build build-x64 --config Release
 
+    - name: Copy Vulkan runtime libraries next to the binaries
+      run: |
+        GLSLANG_DYLIB="$(find "$VULKAN_SDK/lib" -maxdepth 1 -name 'libglslang.dylib' 2>/dev/null | head -n 1)"
+        if [ -z "$GLSLANG_DYLIB" ]; then
+          GLSLANG_DYLIB="$(find "$VULKAN_SDK/lib" -maxdepth 1 -name 'libglslang*.dylib' ! -name 'libglslang-default*' ! -name '*d.dylib' 2>/dev/null | head -n 1)"
+        fi
+        MOLTENVK_DYLIB="$(find "$VULKAN_SDK/lib" -maxdepth 1 -name 'libMoltenVK.dylib' 2>/dev/null | head -n 1)"
+        if [ -z "$GLSLANG_DYLIB" ] || [ -z "$MOLTENVK_DYLIB" ]; then
+          echo "Required Vulkan runtime libraries were not found under $VULKAN_SDK/lib:" >&2
+          ls -la "$VULKAN_SDK/lib" >&2 || true
+          exit 1
+        fi
+        cp -L "$GLSLANG_DYLIB" "./build-x64/libglslang.dylib"
+        cp -L "$MOLTENVK_DYLIB" "./build-x64/libMoltenVK.dylib"
+
     - name: Zip binary files
-      run: zip ./bin-macos-x64.zip ./build-x64/example ./build-x64/benchmark
+      run: zip ./bin-macos-x64.zip ./build-x64/example ./build-x64/benchmark ./build-x64/vulkan_benchmark ./build-x64/libglslang.dylib ./build-x64/libMoltenVK.dylib
 
     - name: Archive macOS build artifacts
       uses: actions/upload-artifact@v4
@@ -134,14 +175,38 @@ jobs:
       run: |
         brew install cmake zip
 
+    - name: Install Vulkan SDK
+      run: |
+        mkdir -p "$RUNNER_TEMP/VulkanSDK"
+        curl -fL -o "$RUNNER_TEMP/vulkansdk-macos.zip" "https://sdk.lunarg.com/sdk/download/1.4.357.1/mac/vulkansdk-macos-1.4.357.1.zip"
+        unzip -q "$RUNNER_TEMP/vulkansdk-macos.zip" -d "$RUNNER_TEMP"
+        sudo "$RUNNER_TEMP/vulkansdk-macOS-1.4.357.1.app/Contents/MacOS/vulkansdk-macOS-1.4.357.1" --root "$RUNNER_TEMP/VulkanSDK" --accept-licenses --default-answer --confirm-command install
+        echo "VULKAN_SDK=$RUNNER_TEMP/VulkanSDK/macOS" >> "$GITHUB_ENV"
+        rm -rf "$RUNNER_TEMP/vulkansdk-macOS-1.4.357.1.app" "$RUNNER_TEMP/vulkansdk-macos.zip"
+
     - name: CMake Configure & Generate(arm64)
-      run: cmake -S . -B build-arm64 -DCMAKE_SYSTEM_PROCESSOR=arm64 -DBUILD_EXAMPLE:BOOL="1" -DBUILD_EXAMPLE_OPENCV:BOOL="0" -DBUILD_BENCHMARK:BOOL="1" -DBUILD_CUDA_BENCHMARK:BOOL="0" -DBUILD_ROCM_BENCHMARK:BOOL="0" -DUSE_OPENMP:BOOL="0" -DUSE_TBB:BOOL="0"
+      run: cmake -S . -B build-arm64 -DCMAKE_SYSTEM_PROCESSOR=arm64 -DBUILD_EXAMPLE:BOOL="1" -DBUILD_EXAMPLE_OPENCV:BOOL="0" -DBUILD_BENCHMARK:BOOL="1" -DBUILD_CUDA_BENCHMARK:BOOL="0" -DBUILD_ROCM_BENCHMARK:BOOL="0" -DBUILD_VULKAN_BENCHMARK:BOOL="1" -DVulkan_INCLUDE_DIR="$VULKAN_SDK/include" -DVulkan_LIBRARY="$(ls "$VULKAN_SDK"/lib/libvulkan*.dylib 2>/dev/null | head -n 1)" -DUSE_OPENMP:BOOL="0" -DUSE_TBB:BOOL="0"
 
     - name: Build(arm64)
       run: cmake --build build-arm64 --config Release
 
+    - name: Copy Vulkan runtime libraries next to the binaries
+      run: |
+        GLSLANG_DYLIB="$(find "$VULKAN_SDK/lib" -maxdepth 1 -name 'libglslang.dylib' 2>/dev/null | head -n 1)"
+        if [ -z "$GLSLANG_DYLIB" ]; then
+          GLSLANG_DYLIB="$(find "$VULKAN_SDK/lib" -maxdepth 1 -name 'libglslang*.dylib' ! -name 'libglslang-default*' ! -name '*d.dylib' 2>/dev/null | head -n 1)"
+        fi
+        MOLTENVK_DYLIB="$(find "$VULKAN_SDK/lib" -maxdepth 1 -name 'libMoltenVK.dylib' 2>/dev/null | head -n 1)"
+        if [ -z "$GLSLANG_DYLIB" ] || [ -z "$MOLTENVK_DYLIB" ]; then
+          echo "Required Vulkan runtime libraries were not found under $VULKAN_SDK/lib:" >&2
+          ls -la "$VULKAN_SDK/lib" >&2 || true
+          exit 1
+        fi
+        cp -L "$GLSLANG_DYLIB" "./build-arm64/libglslang.dylib"
+        cp -L "$MOLTENVK_DYLIB" "./build-arm64/libMoltenVK.dylib"
+
     - name: Zip binary files
-      run: zip ./bin-macos-arm64.zip ./build-arm64/example ./build-arm64/benchmark
+      run: zip ./bin-macos-arm64.zip ./build-arm64/example ./build-arm64/benchmark ./build-arm64/vulkan_benchmark ./build-arm64/libglslang.dylib ./build-arm64/libMoltenVK.dylib
 
     - name: Archive macOS ARM build artifacts
       uses: actions/upload-artifact@v4
@@ -165,8 +230,17 @@ jobs:
         choco install cmake --force
         choco install zip --force
     
+    - name: Install Vulkan SDK
+      run: |
+        $vulkanVersion = "1.4.357.0"
+        $installer = "$env:RUNNER_TEMP\VulkanSDK-Installer.exe"
+        curl.exe -L -o $installer "https://sdk.lunarg.com/sdk/download/1.4.357.0/windows/vulkansdk-windows-X64-1.4.357.0.exe"
+        & $installer --accept-licenses --default-answer --confirm-command install
+        Add-Content $env:GITHUB_ENV "VULKAN_SDK=C:\VulkanSDK\${vulkanVersion}"
+        Add-Content $env:GITHUB_PATH "C:\VulkanSDK\${vulkanVersion}\bin"
+
     - name: CMake Configure & Generate(x64)
-      run: cmake -S . -B build-x64 -DBUILD_EXAMPLE:BOOL="1" -DBUILD_EXAMPLE_OPENCV:BOOL="0" -DBUILD_BENCHMARK:BOOL="1" -DBUILD_CUDA_BENCHMARK:BOOL="1" -DBUILD_ROCM_BENCHMARK:BOOL="1" -DUSE_OPENMP:BOOL="0" -DUSE_TBB:BOOL="0" -DOpenCV_DIR:PATH="C:/tools/opencv/build" -A x64 
+      run: cmake -S . -B build-x64 -DBUILD_EXAMPLE:BOOL="1" -DBUILD_EXAMPLE_OPENCV:BOOL="0" -DBUILD_BENCHMARK:BOOL="1" -DBUILD_CUDA_BENCHMARK:BOOL="1" -DBUILD_ROCM_BENCHMARK:BOOL="1" -DBUILD_VULKAN_BENCHMARK:BOOL="1" -DUSE_OPENMP:BOOL="0" -DUSE_TBB:BOOL="0" -DOpenCV_DIR:PATH="C:/tools/opencv/build" -A x64 
 
     - name: Build(x64)
       run: cmake --build build-x64 --config Release
@@ -178,6 +252,15 @@ jobs:
         tar -xf CUDA_v11.8.zip -C ./build-x64/Release/
         tar -xf ROCm_v6.2.4.zip -C ./build-x64/Release/
 
+    - name: Download and copy Vulkan runtime libraries
+      run: |
+        $targetDir = ".\build-x64\Release"
+        Copy-Item "$env:VULKAN_SDK\Bin\glslang.dll" "$targetDir\glslang.dll" -Force
+        curl.exe -L -o "$env:RUNNER_TEMP\VulkanRT-Components.zip" "https://sdk.lunarg.com/sdk/download/1.4.357.0/windows/VulkanRT-X64-1.4.357.0-Components.zip"
+        tar -xf "$env:RUNNER_TEMP\VulkanRT-Components.zip" -C "$env:RUNNER_TEMP"
+        $loader = Get-ChildItem "$env:RUNNER_TEMP" -Recurse -Filter vulkan-1.dll | Select-Object -First 1
+        Copy-Item $loader.FullName "$targetDir\vulkan-1.dll" -Force
+
     - name: List build folder
       run: |
         dir .\build-x64\
@@ -185,7 +268,7 @@ jobs:
 
     - name: Zip binary files (flat structure)
       run: |
-        zip ./bin-windows-msvc-x64.zip .\build-x64\Release\example.exe .\build-x64\Release\benchmark.exe .\build-x64\Release\cuda_benchmark.exe .\build-x64\Release\rocm_benchmark.exe .\build-x64\Release\*.dll
+        zip ./bin-windows-msvc-x64.zip .\build-x64\Release\example.exe .\build-x64\Release\benchmark.exe .\build-x64\Release\cuda_benchmark.exe .\build-x64\Release\rocm_benchmark.exe .\build-x64\Release\vulkan_benchmark.exe .\build-x64\Release\*.dll
       
     - name: Archive Windows build artifacts
       uses: actions/upload-artifact@v4
@@ -211,7 +294,7 @@ jobs:
         choco install zip --force
     
     - name: CMake Configure & Generate(x86)
-      run: cmake -S . -B build-x86 -DBUILD_EXAMPLE:BOOL="1" -DBUILD_BENCHMARK:BOOL="1" -DBUILD_CUDA_BENCHMARK:BOOL="1" -DBUILD_ROCM_BENCHMARK:BOOL="1" -DUSE_OPENMP:BOOL="0" -DUSE_TBB:BOOL="0" -A Win32
+      run: cmake -S . -B build-x86 -DBUILD_EXAMPLE:BOOL="1" -DBUILD_BENCHMARK:BOOL="1" -DBUILD_CUDA_BENCHMARK:BOOL="1" -DBUILD_ROCM_BENCHMARK:BOOL="1" -DBUILD_VULKAN_BENCHMARK:BOOL="0" -DUSE_OPENMP:BOOL="0" -DUSE_TBB:BOOL="0" -A Win32
 
     - name: Build(x86)
       run: cmake --build build-x86 --config Release
@@ -249,7 +332,7 @@ jobs:
         choco install zip --force
     
     - name: CMake Configure & Generate(arm64)
-      run: cmake -S . -B build-arm64 -DBUILD_EXAMPLE:BOOL="1" -DBUILD_BENCHMARK:BOOL="1" -DBUILD_CUDA_BENCHMARK:BOOL="1" -DBUILD_ROCM_BENCHMARK:BOOL="1" -DUSE_OPENMP:BOOL="0" -DUSE_TBB:BOOL="0" -A ARM64
+      run: cmake -S . -B build-arm64 -DBUILD_EXAMPLE:BOOL="1" -DBUILD_BENCHMARK:BOOL="1" -DBUILD_CUDA_BENCHMARK:BOOL="1" -DBUILD_ROCM_BENCHMARK:BOOL="1" -DBUILD_VULKAN_BENCHMARK:BOOL="0" -DUSE_OPENMP:BOOL="0" -DUSE_TBB:BOOL="0" -A ARM64
 
     - name: Build(arm64)
       run: cmake --build build-arm64 --config Release
