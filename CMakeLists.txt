@@ -18,6 +18,7 @@ option(BUILD_ROCM_BENCHMARK "Build AMD ROCm benchmark target" ON)
 option(BUILD_EXAMPLE_OPENCV "Build example-opencv target" OFF)
 option(USE_TBB "Use Intel oneTBB for parallel programming" OFF)
 option(BUILD_VULKAN_BENCHMARK "Build Vulkan benchmark target" ON)
+option(BUILD_VALIDATE "Build correctness validation target" ON)
 
 # Check for OpenMP support if the option is enabled
 if(USE_OPENMP)
@@ -96,6 +97,16 @@ if(BUILD_VULKAN_BENCHMARK AND Vulkan_FOUND)
     target_compile_options(vulkan_benchmark PRIVATE ${OpenMP_FLAGS})
     target_link_libraries(vulkan_benchmark PRIVATE ${TBB_LIBS})
 endif()
+if(BUILD_VALIDATE)
+    add_executable(validate
+        DynamicLibraryManager.hpp
+        FastChwHwcConverter.hpp FastChwHwcConverterCuda.hpp FastChwHwcConverterROCm.hpp FastChwHwcConverterVulkan.hpp
+        test/benchmark_util.hpp test/validate.cpp)
+    target_include_directories(validate PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${TBB_INCLUDE_DIRS})
+    target_compile_options(validate PRIVATE ${OpenMP_FLAGS})
+    target_link_libraries(validate PRIVATE ${TBB_LIBS})
+endif()
+
 
 if(BUILD_EXAMPLE_OPENCV)
     add_executable(example-opencv FastChwHwcConverter.hpp test/example-opencv.cpp)

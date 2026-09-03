@@ -48,6 +48,7 @@ jobs:
           -DBUILD_VULKAN_BENCHMARK:BOOL="1" \
           -DVulkan_INCLUDE_DIR="${VULKAN_SDK}/include" \
           -DVulkan_LIBRARY="${VULKAN_SDK}/lib/VulkanLoader/lib/libvulkan.so" \
+          -DBUILD_VALIDATE:BOOL="0" \
           -DUSE_OPENMP:BOOL="0" \
           -DUSE_TBB:BOOL="0"
 
@@ -98,6 +99,7 @@ jobs:
           -DBUILD_CUDA_BENCHMARK:BOOL="1" \
           -DBUILD_ROCM_BENCHMARK:BOOL="1" \
           -DBUILD_VULKAN_BENCHMARK:BOOL="0" \
+          -DBUILD_VALIDATE:BOOL="0" \
           -DUSE_OPENMP:BOOL="0" \
           -DUSE_TBB:BOOL="0"
 
@@ -136,7 +138,7 @@ jobs:
         rm -rf "$RUNNER_TEMP/vulkansdk-macOS-1.4.357.1.app" "$RUNNER_TEMP/vulkansdk-macos.zip"
 
     - name: CMake Configure & Generate(x64)
-      run: cmake -S . -B build-x64 -DBUILD_EXAMPLE:BOOL="1" -DBUILD_EXAMPLE_OPENCV:BOOL="0" -DBUILD_BENCHMARK:BOOL="1" -DBUILD_CUDA_BENCHMARK:BOOL="0" -DBUILD_ROCM_BENCHMARK:BOOL="0" -DBUILD_VULKAN_BENCHMARK:BOOL="1" -DVulkan_INCLUDE_DIR="$VULKAN_SDK/include" -DVulkan_LIBRARY="$(ls "$VULKAN_SDK"/lib/libvulkan*.dylib 2>/dev/null | head -n 1)" -DUSE_OPENMP:BOOL="0" -DUSE_TBB:BOOL="0"
+      run: cmake -S . -B build-x64 -DBUILD_EXAMPLE:BOOL="1" -DBUILD_EXAMPLE_OPENCV:BOOL="0" -DBUILD_BENCHMARK:BOOL="1" -DBUILD_CUDA_BENCHMARK:BOOL="0" -DBUILD_ROCM_BENCHMARK:BOOL="0" -DBUILD_VULKAN_BENCHMARK:BOOL="1" -DVulkan_INCLUDE_DIR="$VULKAN_SDK/include" -DVulkan_LIBRARY="$(ls "$VULKAN_SDK"/lib/libvulkan*.dylib 2>/dev/null | head -n 1)" -DBUILD_VALIDATE:BOOL="0" -DUSE_OPENMP:BOOL="0" -DUSE_TBB:BOOL="0"
 
     - name: Build(x64)
       run: cmake --build build-x64 --config Release
@@ -185,7 +187,7 @@ jobs:
         rm -rf "$RUNNER_TEMP/vulkansdk-macOS-1.4.357.1.app" "$RUNNER_TEMP/vulkansdk-macos.zip"
 
     - name: CMake Configure & Generate(arm64)
-      run: cmake -S . -B build-arm64 -DCMAKE_SYSTEM_PROCESSOR=arm64 -DBUILD_EXAMPLE:BOOL="1" -DBUILD_EXAMPLE_OPENCV:BOOL="0" -DBUILD_BENCHMARK:BOOL="1" -DBUILD_CUDA_BENCHMARK:BOOL="0" -DBUILD_ROCM_BENCHMARK:BOOL="0" -DBUILD_VULKAN_BENCHMARK:BOOL="1" -DVulkan_INCLUDE_DIR="$VULKAN_SDK/include" -DVulkan_LIBRARY="$(ls "$VULKAN_SDK"/lib/libvulkan*.dylib 2>/dev/null | head -n 1)" -DUSE_OPENMP:BOOL="0" -DUSE_TBB:BOOL="0"
+      run: cmake -S . -B build-arm64 -DCMAKE_SYSTEM_PROCESSOR=arm64 -DBUILD_EXAMPLE:BOOL="1" -DBUILD_EXAMPLE_OPENCV:BOOL="0" -DBUILD_BENCHMARK:BOOL="1" -DBUILD_CUDA_BENCHMARK:BOOL="0" -DBUILD_ROCM_BENCHMARK:BOOL="0" -DBUILD_VULKAN_BENCHMARK:BOOL="1" -DVulkan_INCLUDE_DIR="$VULKAN_SDK/include" -DVulkan_LIBRARY="$(ls "$VULKAN_SDK"/lib/libvulkan*.dylib 2>/dev/null | head -n 1)" -DBUILD_VALIDATE:BOOL="0" -DUSE_OPENMP:BOOL="0" -DUSE_TBB:BOOL="0"
 
     - name: Build(arm64)
       run: cmake --build build-arm64 --config Release
@@ -240,7 +242,7 @@ jobs:
         Add-Content $env:GITHUB_PATH "C:\VulkanSDK\${vulkanVersion}\bin"
 
     - name: CMake Configure & Generate(x64)
-      run: cmake -S . -B build-x64 -DBUILD_EXAMPLE:BOOL="1" -DBUILD_EXAMPLE_OPENCV:BOOL="0" -DBUILD_BENCHMARK:BOOL="1" -DBUILD_CUDA_BENCHMARK:BOOL="1" -DBUILD_ROCM_BENCHMARK:BOOL="1" -DBUILD_VULKAN_BENCHMARK:BOOL="1" -DUSE_OPENMP:BOOL="0" -DUSE_TBB:BOOL="0" -DOpenCV_DIR:PATH="C:/tools/opencv/build" -A x64 
+      run: cmake -S . -B build-x64 -DBUILD_EXAMPLE:BOOL="1" -DBUILD_EXAMPLE_OPENCV:BOOL="0" -DBUILD_BENCHMARK:BOOL="1" -DBUILD_CUDA_BENCHMARK:BOOL="1" -DBUILD_ROCM_BENCHMARK:BOOL="1" -DBUILD_VULKAN_BENCHMARK:BOOL="1" -DBUILD_VALIDATE:BOOL="0" -DUSE_OPENMP:BOOL="0" -DUSE_TBB:BOOL="0" -DOpenCV_DIR:PATH="C:/tools/opencv/build" -A x64 
 
     - name: Build(x64)
       run: cmake --build build-x64 --config Release
@@ -294,7 +296,7 @@ jobs:
         choco install zip --force
     
     - name: CMake Configure & Generate(x86)
-      run: cmake -S . -B build-x86 -DBUILD_EXAMPLE:BOOL="1" -DBUILD_BENCHMARK:BOOL="1" -DBUILD_CUDA_BENCHMARK:BOOL="1" -DBUILD_ROCM_BENCHMARK:BOOL="1" -DBUILD_VULKAN_BENCHMARK:BOOL="0" -DUSE_OPENMP:BOOL="0" -DUSE_TBB:BOOL="0" -A Win32
+      run: cmake -S . -B build-x86 -DBUILD_EXAMPLE:BOOL="1" -DBUILD_BENCHMARK:BOOL="1" -DBUILD_CUDA_BENCHMARK:BOOL="1" -DBUILD_ROCM_BENCHMARK:BOOL="1" -DBUILD_VULKAN_BENCHMARK:BOOL="0" -DBUILD_VALIDATE:BOOL="0" -DUSE_OPENMP:BOOL="0" -DUSE_TBB:BOOL="0" -A Win32
 
     - name: Build(x86)
       run: cmake --build build-x86 --config Release
@@ -332,7 +334,7 @@ jobs:
         choco install zip --force
     
     - name: CMake Configure & Generate(arm64)
-      run: cmake -S . -B build-arm64 -DBUILD_EXAMPLE:BOOL="1" -DBUILD_BENCHMARK:BOOL="1" -DBUILD_CUDA_BENCHMARK:BOOL="1" -DBUILD_ROCM_BENCHMARK:BOOL="1" -DBUILD_VULKAN_BENCHMARK:BOOL="0" -DUSE_OPENMP:BOOL="0" -DUSE_TBB:BOOL="0" -A ARM64
+      run: cmake -S . -B build-arm64 -DBUILD_EXAMPLE:BOOL="1" -DBUILD_BENCHMARK:BOOL="1" -DBUILD_CUDA_BENCHMARK:BOOL="1" -DBUILD_ROCM_BENCHMARK:BOOL="1" -DBUILD_VULKAN_BENCHMARK:BOOL="0" -DBUILD_VALIDATE:BOOL="0" -DUSE_OPENMP:BOOL="0" -DUSE_TBB:BOOL="0" -A ARM64
 
     - name: Build(arm64)
       run: cmake --build build-arm64 --config Release

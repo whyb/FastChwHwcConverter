@@ -1,10 +1,14 @@
-﻿#include <iostream>
+#include <iostream>
 #include <cstdint>
 #include <iomanip>
-#include <chrono>
+#include <vector>
 
 #include "FastChwHwcConverterROCm.hpp"
+#include "benchmark_util.hpp"
+
 #define TEST_COUNT 10000
+#define WARMUP_COUNT 1000
+#define REPEAT_COUNT 3
 
 int main() {
     if (!whyb::amd::init()) { return 0; }
@@ -27,54 +31,34 @@ int main() {
         const size_t& height = resolution.second;
 
         for (auto& channel : channels) {
-            // Defining input and output 
             const size_t pixel_size = height * width * channel;
 
-            // 1. host memory
-            //std::vector<uint8_t> src_uint8(pixel_size); // Source data(hwc)
-            //std::vector<float> src_float(pixel_size); // Source data(chw)
-            //
-            //std::vector<float> out_float(pixel_size); // Inference output data(chw)
-            //std::vector<uint8_t> out_uint8(pixel_size); // Inference output data(hwc)
+            // Randomized host data (uploaded to device before timing).
+            const std::vector<uint8_t> host_src_u8 = whyb_test::random_u8(pixel_size);
+            const std::vector<float> host_src_f32 = whyb_test::random_f32(pixel_size, 0.0f, 1.0f);
 
-            // 2. device memory
-            hipDeviceptr_t src_uint8 = 0;
-            hipDeviceptr_t src_float = 0;
-            hipMalloc(&src_uint8, pixel_size * sizeof(uint8_t));
-            hipMalloc(&src_float, pixel_size * sizeof(float));
-            
+            hipDeviceptr_t src_uint8 = 0;   // HWC uint8 input  -> CHW float (hwc2chw dst)
+            hipDeviceptr_t src_float = 0;   // CHW float input  -> HWC uint8 (chw2hwc dst)
             hipDeviceptr_t out_float = 0;
             hipDeviceptr_t out_uint8 = 0;
+            hipMalloc(&src_uint8, pixel_size * sizeof(uint8_t));
+            hipMalloc(&src_float, pixel_size * sizeof(float));
             hipMalloc(&out_float, pixel_size * sizeof(float));
             hipMalloc(&out_uint8, pixel_size * sizeof(uint8_t));
 
-            auto startTime = std::chrono::high_resolution_clock::now();
-            for (size_t i = 0; i < TEST_COUNT; ++i) {
+            // Fill the kernel inputs with random data so the benchmark is not
+            // biased by empty (all-zero) buffers.
+            hipMemcpyHtoD(src_uint8, (void*)host_src_u8.data(), pixel_size * sizeof(uint8_t));
+            hipMemcpyHtoD(out_float, (void*)host_src_f32.data(), pixel_size * sizeof(float));
 
-                // 1. host memory
-                //whyb::hwc2chw_rocm(height, width, channel, (uint8_t*)src_uint8.data(), (float*)src_float.data(), 1.f / 255.f);
-
-                // 2. device memory
+            const double hwc2chw_us = whyb_test::measure_min([&]() {
                 whyb::amd::hwc2chw(height, width, channel, src_uint8, src_float, 1.f / 255.f);
+            }, WARMUP_COUNT, REPEAT_COUNT, TEST_COUNT);
 
-            }
-            auto endTime = std::chrono::high_resolution_clock::now();
-            auto hwc2chwDuration = std::chrono::duration_cast<std::chrono::microseconds>(endTime - startTime) / double(TEST_COUNT);
-
-            startTime = std::chrono::high_resolution_clock::now();
-            for (size_t i = 0; i < TEST_COUNT; ++i) {
-
-                // 1. host memory
-                //whyb::chw2hwc_rocm(channel, height, width, (float*)out_float.data(), (uint8_t*)out_uint8.data(), 255.f);
-
-                // 2. device memory
+            const double chw2hwc_us = whyb_test::measure_min([&]() {
                 whyb::amd::chw2hwc(channel, height, width, out_float, out_uint8, 255.f);
+            }, WARMUP_COUNT, REPEAT_COUNT, TEST_COUNT);
 
-            }
-            endTime = std::chrono::high_resolution_clock::now();
-            auto chw2hwcDuration = std::chrono::duration_cast<std::chrono::microseconds>(endTime - startTime) / double(TEST_COUNT);
-
-            // 2. device memory
             hipFree(src_uint8);
             hipFree(src_float);
             hipFree(out_float);
@@ -82,8 +66,8 @@ int main() {
 
             std::cout << width << ",\t" << height << ",\t" << channel << ",\t"
                 << std::fixed << std::setprecision(3)
-                << hwc2chwDuration.count() / 1000.0 << "ms,\t"
-                << chw2hwcDuration.count() / 1000.0 << "ms" << std::endl;
+                << hwc2chw_us / 1000.0 << "ms,\t"
+                << chw2hwc_us / 1000.0 << "ms" << std::endl;
         }
     }
     whyb::amd::release();

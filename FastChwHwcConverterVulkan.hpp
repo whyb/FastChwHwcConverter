@@ -1322,6 +1322,117 @@ namespace whyb {
                 vkFreeMemory(device, memory, nullptr);
             }
         }
+        /**
+        * @brief Uploads host data into an existing device buffer
+        *
+        * @param buffer Vulkan device buffer handle (created by createDeviceBuffer)
+        * @param memory VkDeviceMemory handle of the device buffer
+        * @param bytes Number of bytes to upload (may be smaller than the allocation)
+        * @param src Pointer to the host source data
+        * @return true on success, false otherwise
+        */
+        static bool uploadToDeviceBuffer(const VkBuffer buffer, const VkDeviceMemory memory,
+                                         const size_t bytes, const void* src) {
+            vulkan();
+            if (buffer == 0 || memory == 0 || bytes == 0 || src == nullptr) {
+                return false;
+            }
+            std::lock_guard<std::mutex> lock(VulkanMutex);
+            if (initVulkanStatus != InitVulkanStatusEnum::Inited) {
+                return false;
+            }
+            const size_t padded_bytes = (bytes + 3u) & ~size_t(3u);
+
+            VkBuffer staging = 0;
+            VkDeviceMemory staging_memory = 0;
+            if (!createBuffer(padded_bytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                (VkFlags)(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT),
+                staging, staging_memory)) {
+                return false;
+            }
+
+            bool ok = writeHostBuffer(staging_memory, bytes, src);
+            if (ok) {
+                VkCommandBuffer cmd = 0;
+                ok = beginCommandBuffer(cmd);
+                if (ok) {
+                    // copy host staging buffer to the device-local buffer
+                    VkBufferCopy copy_region = {};
+                    copy_region.srcOffset = 0;
+                    copy_region.dstOffset = 0;
+                    copy_region.size = (VkDeviceSize)padded_bytes;
+                    vkCmdCopyBuffer(cmd, staging, buffer, 1, &copy_region);
+
+                    // barrier: transfer write -> shader read (consumers)
+                    VkMemoryBarrier barrier = {};
+                    barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+                    barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+                    barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+                    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1, &barrier, 0, nullptr, 0, nullptr);
+
+                    ok = submitCommandBuffer(cmd);
+                }
+            }
+            destroyBuffer(staging, staging_memory);
+            return ok;
+        }
+
+        /**
+        * @brief Downloads data from an existing device buffer to host memory
+        *
+        * @param buffer Vulkan device buffer handle (created by createDeviceBuffer)
+        * @param memory VkDeviceMemory handle of the device buffer
+        * @param bytes Number of bytes to download (may be smaller than the allocation)
+        * @param dst Pointer to the host destination data
+        * @return true on success, false otherwise
+        */
+        static bool downloadFromDeviceBuffer(const VkBuffer buffer, const VkDeviceMemory memory,
+                                             const size_t bytes, void* dst) {
+            vulkan();
+            if (buffer == 0 || memory == 0 || bytes == 0 || dst == nullptr) {
+                return false;
+            }
+            std::lock_guard<std::mutex> lock(VulkanMutex);
+            if (initVulkanStatus != InitVulkanStatusEnum::Inited) {
+                return false;
+            }
+            const size_t padded_bytes = (bytes + 3u) & ~size_t(3u);
+
+            VkBuffer staging = 0;
+            VkDeviceMemory staging_memory = 0;
+            if (!createBuffer(padded_bytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                (VkFlags)(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT),
+                staging, staging_memory)) {
+                return false;
+            }
+
+            VkCommandBuffer cmd = 0;
+            bool ok = beginCommandBuffer(cmd);
+            if (ok) {
+                // barrier: any producer -> transfer read
+                VkMemoryBarrier barrier = {};
+                barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+                barrier.srcAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT;
+                barrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+                vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+                    VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 1, &barrier, 0, nullptr, 0, nullptr);
+
+                // copy device-local buffer back to the host staging buffer
+                VkBufferCopy copy_region = {};
+                copy_region.srcOffset = 0;
+                copy_region.dstOffset = 0;
+                copy_region.size = (VkDeviceSize)padded_bytes;
+                vkCmdCopyBuffer(cmd, buffer, staging, 1, &copy_region);
+
+                ok = submitCommandBuffer(cmd);
+            }
+            if (ok) {
+                ok = readHostBuffer(staging_memory, bytes, dst);
+            }
+            destroyBuffer(staging, staging_memory);
+            return ok;
+        }
 
     private:
         struct PushConstantsHwc2Chw {

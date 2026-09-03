@@ -62,6 +62,7 @@ Any similar type conversion code you find another project on GitHub will most li
   - [HWC -> CHW (Vulkan)](#hwc-to-chw-conversion-vulkan)
   - [CHW -> HWC (Vulkan)](#chw-to-hwc-conversion-vulkan)
   - [Example](#example)
+- [Validation](#validation)
 - [Benchmark Performance Timing Results](#benchmark-performance-timing-results)
 - [Contact](#contact)
 
@@ -557,9 +558,30 @@ int main() {
 ```
 If you are using OpenCV's `cv::Mat`, Please refer to the **test/example-opencv.cpp** file.
 
+## Validation
+
+test/validate.cpp checks correctness with randomized inputs (no third-party test framework is used):
+
+* The CPU backend is compared element-by-element against a naive scalar reference implementation for every HasAlpha / NeedClamp / NeedNormalizedMeanStds template branch, with channels 1, 3 and 4 (normalization is only defined for up to 3 channels).
+* The CUDA / ROCm / Vulkan backends, when a device is available, are compared against the CPU backend on the same random data. The GPU backends implement the fixed transform `hwc2chw: dst = src * alpha` (CHW output) and `chw2hwc: dst = clamp(src * alpha, 0, 255)` (HWC output).
+
+Build and run it with (the target is enabled by default):
+
+```shell
+cmake -S . -B build -DBUILD_VALIDATE=ON
+
+cmake --build build --config Release
+
+build/validate
+```
+
+On Windows the binary is `build\Release\validate.exe`. The program prints a summary for every backend and exits with a non-zero code if any mismatch is found. A backend without a GPU/device is skipped gracefully (exit code 0), so the CPU checks still run on CI machines that have no GPU.
+
 ## Benchmark Performance Timing Results
 
 The table below shows the benchmark performance timing for different image dimensions, channels, and processing configurations. The GPU backends (CUDA / ROCm / Vulkan) are measured on device memory, while the CPU columns are measured on host memory.
+
+All benchmark programs fill their inputs with randomized data, run warm-up iterations, and report the minimum average over several repetitions (see `test/benchmark.cpp` and `test/*_benchmark.cpp`), so the results are not biased by all-zero buffers or one-off system noise.
 
     RAM: DDR5 4800MHz 4x16GB
     CPU(OpenMP): Intel(R) Core(TM) i7-13700K
