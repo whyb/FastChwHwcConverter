@@ -149,7 +149,9 @@ void check_cpu_chw2hwc(const size_t h, const size_t w, const size_t c) {
 }
 
 void validate_cpu() {
-    const size_t sizes[][2] = { { 3, 5 }, { 16, 16 }, { 33, 41 } };
+    // The last size exceeds the CPU backend parallel threshold so threaded
+    // dispatch is also checked against the reference implementation.
+    const size_t sizes[][2] = { { 3, 5 }, { 16, 16 }, { 33, 41 }, { 128, 512 } };
     for (size_t si = 0; si < 3; ++si) {
         const size_t h = sizes[si][0];
         const size_t w = sizes[si][1];
