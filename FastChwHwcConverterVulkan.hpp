@@ -22,16 +22,18 @@
 #include "DynamicLibraryManager.hpp"
 #include "FastChwHwcConverter.hpp"
 
+#include <atomic>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
-#include <iostream>
 #include <mutex>
 #include <string>
 #include <vector>
 
 #ifdef _WIN32
+#ifndef NOMINMAX
 #define NOMINMAX
+#endif
 #include <windows.h>
 #else
 #include <dirent.h>
@@ -40,6 +42,8 @@
 #include <mach-o/dyld.h>
 #endif
 #endif
+
+namespace whyb {
 
 // ---------------------------------------------------------------------------
 // glslang C interface ABI types (glslang_c_interface.h counterpart).
@@ -304,18 +308,36 @@ typedef uint64_t VkSemaphore;
 typedef uint64_t VkFence;
 typedef uint64_t VkDeviceSize;
 
-#define VK_NULL_HANDLE 0ULL
-#define VK_WHOLE_SIZE (~0ULL)
-#define VK_MAX_PHYSICAL_DEVICE_NAME_SIZE 256U
-#define VK_UUID_SIZE 16U
-#define VK_MAX_MEMORY_TYPES 32U
-#define VK_MAX_MEMORY_HEAPS 16U
+#ifndef VK_NULL_HANDLE
+#define VK_NULL_HANDLE 0ULL
+#endif
+#ifndef VK_WHOLE_SIZE
+#define VK_WHOLE_SIZE (~0ULL)
+#endif
+#ifndef VK_MAX_PHYSICAL_DEVICE_NAME_SIZE
+#define VK_MAX_PHYSICAL_DEVICE_NAME_SIZE 256U
+#endif
+#ifndef VK_UUID_SIZE
+#define VK_UUID_SIZE 16U
+#endif
+#ifndef VK_MAX_MEMORY_TYPES
+#define VK_MAX_MEMORY_TYPES 32U
+#endif
+#ifndef VK_MAX_MEMORY_HEAPS
+#define VK_MAX_MEMORY_HEAPS 16U
+#endif
 
+#ifndef VK_MAKE_VERSION
 #define VK_MAKE_VERSION(major, minor, patch) ((((uint32_t)(major)) << 22) | (((uint32_t)(minor)) << 12) | ((uint32_t)(patch)))
-#define VK_API_VERSION_1_0 VK_MAKE_VERSION(1, 0, 0)
+#endif
+#ifndef VK_API_VERSION_1_0
+#define VK_API_VERSION_1_0 VK_MAKE_VERSION(1, 0, 0)
+#endif
 
 typedef int32_t VkResult;
-#define VK_SUCCESS 0
+#ifndef VK_SUCCESS
+#define VK_SUCCESS 0
+#endif
 
 typedef enum {
     VK_STRUCTURE_TYPE_APPLICATION_INFO = 0,
@@ -871,8 +893,7 @@ void main()
 }
 )";
 
-namespace whyb {
-    enum struct InitVulkanStatusEnum : int {
+enum struct InitVulkanStatusEnum : int {
         Ready = 0,
         Inited = 1,
         Failed = 2,
@@ -897,6 +918,16 @@ namespace whyb {
         static bool init() { return initAll(); }
         static bool release() { return releaseAll(); }
 
+        // Query initialization state and the last backend error without
+        // requiring library-side terminal diagnostics.
+        static InitVulkanStatusEnum status() { return initVulkanStatus.load(std::memory_order_acquire); }
+        static std::string lastError()
+        {
+            std::lock_guard<std::mutex> lock(errorMutex);
+            return lastVulkanErrorStr;
+        }
+
+
         /**
         * @brief Converts image data from HWC format to CHW format
         *
@@ -916,7 +947,7 @@ namespace whyb {
                 return;
             }
             std::lock_guard<std::mutex> lock(VulkanMutex);
-            if (initVulkanStatus != InitVulkanStatusEnum::Inited) {
+            if (initVulkanStatus.load(std::memory_order_acquire) != InitVulkanStatusEnum::Inited) {
                 // use cpu
                 cpu::hwc2chw<uint8_t, float, true>(h, w, c, src, dst, alpha);
                 return;
@@ -947,6 +978,7 @@ namespace whyb {
                 destroyBuffer(dev_dst, dev_dst_mem);
                 destroyBuffer(host_src, host_src_mem);
                 destroyBuffer(host_dst, host_dst_mem);
+                recordCallFailure("Vulkan hwc2chw buffer allocation failed");
                 cpu::hwc2chw<uint8_t, float, true>(h, w, c, src, dst, alpha);
                 return;
             }
@@ -959,6 +991,7 @@ namespace whyb {
             };
             auto fallback_to_cpu = [&]() {
                 cleanup_buffers();
+                recordCallFailure("Vulkan hwc2chw GPU execution failed");
                 cpu::hwc2chw<uint8_t, float, true>(h, w, c, src, dst, alpha);
             };
 
@@ -1021,8 +1054,10 @@ namespace whyb {
             const bool read_ok = readHostBuffer(host_dst_mem, dst_bytes, dst);
             cleanup_buffers();
             if (!read_ok) {
+                recordCallFailure("Vulkan hwc2chw result readback failed");
                 cpu::hwc2chw<uint8_t, float, true>(h, w, c, src, dst, alpha);
             }
+            clearCallFailures();
         }
 
         /**
@@ -1044,7 +1079,7 @@ namespace whyb {
                 return;
             }
             std::lock_guard<std::mutex> lock(VulkanMutex);
-            if (initVulkanStatus != InitVulkanStatusEnum::Inited) {
+            if (initVulkanStatus.load(std::memory_order_acquire) != InitVulkanStatusEnum::Inited) {
                 // use cpu (clamp before narrowing, matching the shader behavior)
                 cpu::chw2hwc<float, uint8_t, true, true>(c, h, w, src, dst, alpha, 0, 255);
                 return;
@@ -1075,6 +1110,7 @@ namespace whyb {
                 destroyBuffer(dev_dst, dev_dst_mem);
                 destroyBuffer(host_src, host_src_mem);
                 destroyBuffer(host_dst, host_dst_mem);
+                recordCallFailure("Vulkan chw2hwc buffer allocation failed");
                 cpu::chw2hwc<float, uint8_t, true, true>(c, h, w, src, dst, alpha, 0, 255);
                 return;
             }
@@ -1087,6 +1123,7 @@ namespace whyb {
             };
             auto fallback_to_cpu = [&]() {
                 cleanup_buffers();
+                recordCallFailure("Vulkan chw2hwc GPU execution failed");
                 cpu::chw2hwc<float, uint8_t, true, true>(c, h, w, src, dst, alpha, 0, 255);
             };
 
@@ -1149,8 +1186,10 @@ namespace whyb {
             const bool read_ok = readHostBuffer(host_dst_mem, dst_bytes, dst);
             cleanup_buffers();
             if (!read_ok) {
+                recordCallFailure("Vulkan chw2hwc result readback failed");
                 cpu::chw2hwc<float, uint8_t, true, true>(c, h, w, src, dst, alpha, 0, 255);
             }
+            clearCallFailures();
         }
 
         /**
@@ -1173,11 +1212,13 @@ namespace whyb {
                 return;
             }
             std::lock_guard<std::mutex> lock(VulkanMutex);
-            if (initVulkanStatus != InitVulkanStatusEnum::Inited) {
+            if (initVulkanStatus.load(std::memory_order_acquire) != InitVulkanStatusEnum::Inited) {
+                setLastError("Vulkan device-memory conversion called before successful initialization.");
                 return;
             }
             VkCommandBuffer cmd = 0;
             if (!beginCommandBuffer(cmd)) {
+                recordCallFailure("Vulkan device-memory command buffer setup failed");
                 return;
             }
 
@@ -1210,7 +1251,11 @@ namespace whyb {
             vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
                 VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 1, &barrier, 0, nullptr, 0, nullptr);
 
-            submitCommandBuffer(cmd);
+            if (!submitCommandBuffer(cmd)) {
+                recordCallFailure("Vulkan device-memory conversion submission failed");
+                return;
+            }
+            clearCallFailures();
         }
 
         /**
@@ -1233,11 +1278,13 @@ namespace whyb {
                 return;
             }
             std::lock_guard<std::mutex> lock(VulkanMutex);
-            if (initVulkanStatus != InitVulkanStatusEnum::Inited) {
+            if (initVulkanStatus.load(std::memory_order_acquire) != InitVulkanStatusEnum::Inited) {
+                setLastError("Vulkan device-memory conversion called before successful initialization.");
                 return;
             }
             VkCommandBuffer cmd = 0;
             if (!beginCommandBuffer(cmd)) {
+                recordCallFailure("Vulkan device-memory command buffer setup failed");
                 return;
             }
 
@@ -1272,7 +1319,11 @@ namespace whyb {
             vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
                 VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 1, &barrier, 0, nullptr, 0, nullptr);
 
-            submitCommandBuffer(cmd);
+            if (!submitCommandBuffer(cmd)) {
+                recordCallFailure("Vulkan device-memory conversion submission failed");
+                return;
+            }
+            clearCallFailures();
         }
 
         /**
@@ -1292,7 +1343,7 @@ namespace whyb {
                 return false;
             }
             std::lock_guard<std::mutex> lock(VulkanMutex);
-            if (initVulkanStatus != InitVulkanStatusEnum::Inited) {
+            if (initVulkanStatus.load(std::memory_order_acquire) != InitVulkanStatusEnum::Inited) {
                 return false;
             }
             // Round the allocation up to 4 bytes: the chw2hwc shader packs
@@ -1312,7 +1363,7 @@ namespace whyb {
         static void destroyDeviceBuffer(const VkBuffer buffer, const VkDeviceMemory memory) {
             vulkan();
             std::lock_guard<std::mutex> lock(VulkanMutex);
-            if (initVulkanStatus != InitVulkanStatusEnum::Inited) {
+            if (initVulkanStatus.load(std::memory_order_acquire) != InitVulkanStatusEnum::Inited) {
                 return;
             }
             if (buffer != 0) {
@@ -1338,7 +1389,7 @@ namespace whyb {
                 return false;
             }
             std::lock_guard<std::mutex> lock(VulkanMutex);
-            if (initVulkanStatus != InitVulkanStatusEnum::Inited) {
+            if (initVulkanStatus.load(std::memory_order_acquire) != InitVulkanStatusEnum::Inited) {
                 return false;
             }
             const size_t padded_bytes = (bytes + 3u) & ~size_t(3u);
@@ -1375,6 +1426,11 @@ namespace whyb {
                 }
             }
             destroyBuffer(staging, staging_memory);
+            if (ok) {
+                clearCallFailures();
+            } else {
+                recordCallFailure("Vulkan device-buffer upload failed");
+            }
             return ok;
         }
 
@@ -1394,7 +1450,7 @@ namespace whyb {
                 return false;
             }
             std::lock_guard<std::mutex> lock(VulkanMutex);
-            if (initVulkanStatus != InitVulkanStatusEnum::Inited) {
+            if (initVulkanStatus.load(std::memory_order_acquire) != InitVulkanStatusEnum::Inited) {
                 return false;
             }
             const size_t padded_bytes = (bytes + 3u) & ~size_t(3u);
@@ -1431,6 +1487,11 @@ namespace whyb {
                 ok = readHostBuffer(staging_memory, bytes, dst);
             }
             destroyBuffer(staging, staging_memory);
+            if (ok) {
+                clearCallFailures();
+            } else {
+                recordCallFailure("Vulkan device-buffer download failed");
+            }
             return ok;
         }
 
@@ -1447,6 +1508,33 @@ namespace whyb {
             uint32_t w;
             float alpha;
         };
+
+        static void setLastError(const std::string& message)
+        {
+            std::lock_guard<std::mutex> lock(errorMutex);
+            lastVulkanErrorStr = message;
+        }
+
+        // Runtime failures use a small backoff threshold so repeated calls do
+        // not keep paying submission/setup overhead after the device is broken.
+        static void recordCallFailure(const std::string& message)
+        {
+            const auto failures = ++consecutiveVulkanFailures;
+            const std::string fullMessage = message + " (consecutive Vulkan failures: " +
+                std::to_string(failures) + ").";
+            setLastError(fullMessage);
+
+            if (failures >= maxConsecutiveVulkanFailures)
+            {
+                initVulkanStatus.store(InitVulkanStatusEnum::Failed, std::memory_order_release);
+                setLastError(fullMessage + " Vulkan backend disabled until release()/init().");
+            }
+        }
+
+        static void clearCallFailures()
+        {
+            consecutiveVulkanFailures.store(0, std::memory_order_release);
+        }
 
         static bool isFileExists(const std::string& path) {
 #ifdef _WIN32
@@ -1477,7 +1565,7 @@ namespace whyb {
 #ifdef _WIN32
             char currentDir[MAX_PATH] = { 0 };
             if (GetModuleFileNameA(nullptr, currentDir, MAX_PATH) == 0) {
-                std::cerr << "Failed to get current directory on Windows." << std::endl;
+                setLastError("Failed to get current directory on Windows.");
                 return "";
             }
             std::string executablePath(currentDir);
@@ -1525,7 +1613,7 @@ namespace whyb {
 #else
             char currentDir[PATH_MAX] = { 0 };
             if (readlink("/proc/self/exe", currentDir, PATH_MAX) == -1) {
-                std::cerr << "Failed to get current directory on Linux." << std::endl;
+                setLastError("Failed to get current directory on Linux.");
                 return "";
             }
             std::string executablePath(currentDir);
@@ -1554,12 +1642,12 @@ namespace whyb {
         static std::string getExecutableDirectory() {
             uint32_t path_size = 0;
             if (_NSGetExecutablePath(nullptr, &path_size) != 0 || path_size == 0) {
-                std::cerr << "Failed to get the executable path on macOS." << std::endl;
+                setLastError("Failed to get the executable path on macOS.");
                 return "";
             }
             std::string executable_path(path_size, '\0');
             if (_NSGetExecutablePath(&executable_path[0], &path_size) != 0) {
-                std::cerr << "Failed to get the executable path on macOS." << std::endl;
+                setLastError("Failed to get the executable path on macOS.");
                 return "";
             }
             executable_path.resize(std::strlen(executable_path.c_str()));
@@ -1607,7 +1695,7 @@ namespace whyb {
             auto* dl_manager = DynamicLibraryManager::instance();
             auto glslang_lib = dl_manager->loadLibrary(library_name);
             if (!glslang_lib) {
-                std::cerr << "Failed to load glslang library: " << library_name << std::endl;
+                setLastError("Failed to load glslang library: " + library_name + ".");
                 return false;
             }
             glslang_initialize_process = (glslang_initialize_process_t)(dl_manager->getFunction(library_name, "glslang_initialize_process"));
@@ -1632,7 +1720,7 @@ namespace whyb {
                 !glslang_program_create || !glslang_program_delete ||
                 !glslang_program_add_shader || !glslang_program_link || !glslang_program_get_info_log ||
                 !glslang_program_SPIRV_generate || !glslang_program_SPIRV_get_size || !glslang_program_SPIRV_get) {
-                std::cerr << "Failed to load one or more glslang functions from: " << library_name << std::endl;
+                setLastError("Failed to load one or more glslang functions from: " + library_name + ".");
                 dl_manager->unloadLibrary(library_name);
                 return false;
             }
@@ -1776,26 +1864,26 @@ namespace whyb {
 
             glslang_shader_t* shader = glslang_shader_create(&input);
             if (shader == nullptr) {
-                std::cerr << "glslang_shader_create failed." << std::endl;
+                setLastError("glslang_shader_create failed.");
                 return false;
             }
             int preprocessed = glslang_shader_preprocess(shader, &input);
             if (preprocessed == 0) {
                 const char* log = glslang_shader_get_info_log(shader);
-                std::cerr << "glslang shader preprocess error: " << (log != nullptr ? log : "") << std::endl;
+                setLastError(std::string("glslang shader preprocess error: ") + (log != nullptr ? log : ""));
                 glslang_shader_delete(shader);
                 return false;
             }
             int parsed = glslang_shader_parse(shader, &input);
             if (parsed == 0) {
                 const char* log = glslang_shader_get_info_log(shader);
-                std::cerr << "glslang shader parse error: " << (log != nullptr ? log : "") << std::endl;
+                setLastError(std::string("glslang shader parse error: ") + (log != nullptr ? log : ""));
                 glslang_shader_delete(shader);
                 return false;
             }
             glslang_program_t* program = glslang_program_create();
             if (program == nullptr) {
-                std::cerr << "glslang_program_create failed." << std::endl;
+                setLastError("glslang_program_create failed.");
                 glslang_shader_delete(shader);
                 return false;
             }
@@ -1803,7 +1891,7 @@ namespace whyb {
             int linked = glslang_program_link(program, GLSLANG_MSG_SPV_RULES_BIT | GLSLANG_MSG_VULKAN_RULES_BIT);
             if (linked == 0) {
                 const char* log = glslang_program_get_info_log(program);
-                std::cerr << "glslang program link error: " << (log != nullptr ? log : "") << std::endl;
+                setLastError(std::string("glslang program link error: ") + (log != nullptr ? log : ""));
                 glslang_program_delete(program);
                 glslang_shader_delete(shader);
                 return false;
@@ -1839,7 +1927,7 @@ namespace whyb {
             buffer_info.usage = usage;
             buffer_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
             if (vkCreateBuffer(device, &buffer_info, nullptr, &buffer) != VK_SUCCESS) {
-                std::cerr << "vkCreateBuffer failed." << std::endl;
+                setLastError("vkCreateBuffer failed.");
                 return false;
             }
             VkMemoryRequirements mem_req;
@@ -1847,7 +1935,7 @@ namespace whyb {
             vkGetBufferMemoryRequirements(device, buffer, &mem_req);
             const uint32_t memory_type_index = findMemoryType(mem_req.memoryTypeBits, memory_flags);
             if (memory_type_index == ~0u) {
-                std::cerr << "No suitable Vulkan memory type found for buffer allocation." << std::endl;
+                setLastError("No suitable Vulkan memory type found for buffer allocation.");
                 vkDestroyBuffer(device, buffer, nullptr);
                 buffer = 0;
                 return false;
@@ -1857,13 +1945,13 @@ namespace whyb {
             alloc_info.allocationSize = mem_req.size;
             alloc_info.memoryTypeIndex = memory_type_index;
             if (vkAllocateMemory(device, &alloc_info, nullptr, &memory) != VK_SUCCESS) {
-                std::cerr << "vkAllocateMemory failed." << std::endl;
+                setLastError("vkAllocateMemory failed.");
                 vkDestroyBuffer(device, buffer, nullptr);
                 buffer = 0;
                 return false;
             }
             if (vkBindBufferMemory(device, buffer, memory, 0) != VK_SUCCESS) {
-                std::cerr << "vkBindBufferMemory failed." << std::endl;
+                setLastError("vkBindBufferMemory failed.");
                 vkFreeMemory(device, memory, nullptr);
                 vkDestroyBuffer(device, buffer, nullptr);
                 buffer = 0;
@@ -1887,7 +1975,7 @@ namespace whyb {
         static bool writeHostBuffer(const VkDeviceMemory memory, const size_t size, const void* data) {
             void* mapped = nullptr;
             if (vkMapMemory(device, memory, 0, (VkDeviceSize)size, 0, &mapped) != VK_SUCCESS) {
-                std::cerr << "vkMapMemory (host write) failed." << std::endl;
+                setLastError("vkMapMemory (host write) failed.");
                 return false;
             }
             std::memcpy(mapped, data, size);
@@ -1898,7 +1986,7 @@ namespace whyb {
         static bool readHostBuffer(const VkDeviceMemory memory, const size_t size, void* data) {
             void* mapped = nullptr;
             if (vkMapMemory(device, memory, 0, (VkDeviceSize)size, 0, &mapped) != VK_SUCCESS) {
-                std::cerr << "vkMapMemory (host read) failed." << std::endl;
+                setLastError("vkMapMemory (host read) failed.");
                 return false;
             }
             std::memcpy(data, mapped, size);
@@ -1913,14 +2001,14 @@ namespace whyb {
             alloc_info.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
             alloc_info.commandBufferCount = 1;
             if (vkAllocateCommandBuffers(device, &alloc_info, &cmd) != VK_SUCCESS) {
-                std::cerr << "vkAllocateCommandBuffers failed." << std::endl;
+                setLastError("vkAllocateCommandBuffers failed.");
                 return false;
             }
             VkCommandBufferBeginInfo begin_info = {};
             begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
             begin_info.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
             if (vkBeginCommandBuffer(cmd, &begin_info) != VK_SUCCESS) {
-                std::cerr << "vkBeginCommandBuffer failed." << std::endl;
+                setLastError("vkBeginCommandBuffer failed.");
                 vkFreeCommandBuffers(device, commandPool, 1, &cmd);
                 cmd = 0;
                 return false;
@@ -1931,7 +2019,7 @@ namespace whyb {
         static bool submitCommandBuffer(VkCommandBuffer& cmd) {
             VkResult res = vkEndCommandBuffer(cmd);
             if (res != VK_SUCCESS) {
-                std::cerr << "vkEndCommandBuffer failed with error " << res << "." << std::endl;
+                setLastError("vkEndCommandBuffer failed with error " + std::to_string(res) + ".");
                 vkFreeCommandBuffers(device, commandPool, 1, &cmd);
                 cmd = 0;
                 return false;
@@ -1942,14 +2030,14 @@ namespace whyb {
             submit_info.pCommandBuffers = &cmd;
             res = vkQueueSubmit(queue, 1, &submit_info, (VkFence)VK_NULL_HANDLE);
             if (res != VK_SUCCESS) {
-                std::cerr << "vkQueueSubmit failed with error " << res << "." << std::endl;
+                setLastError("vkQueueSubmit failed with error " + std::to_string(res) + ".");
                 vkFreeCommandBuffers(device, commandPool, 1, &cmd);
                 cmd = 0;
                 return false;
             }
             res = vkQueueWaitIdle(queue);
             if (res != VK_SUCCESS) {
-                std::cerr << "vkQueueWaitIdle failed with error " << res << "." << std::endl;
+                setLastError("vkQueueWaitIdle failed with error " + std::to_string(res) + ".");
             }
             vkFreeCommandBuffers(device, commandPool, 1, &cmd);
             cmd = 0;
@@ -1987,13 +2075,13 @@ namespace whyb {
             uint32_t device_count = 0;
             VkResult res = vkEnumeratePhysicalDevices(instance, &device_count, nullptr);
             if (res != VK_SUCCESS || device_count == 0) {
-                std::cerr << "vkEnumeratePhysicalDevices failed or no Vulkan device found." << std::endl;
+                setLastError("vkEnumeratePhysicalDevices failed or no Vulkan device found.");
                 return false;
             }
             devices.resize(device_count);
             res = vkEnumeratePhysicalDevices(instance, &device_count, devices.data());
             if (res != VK_SUCCESS) {
-                std::cerr << "vkEnumeratePhysicalDevices failed." << std::endl;
+                setLastError("vkEnumeratePhysicalDevices failed.");
                 return false;
             }
 
@@ -2049,7 +2137,7 @@ namespace whyb {
                 }
             }
             if (!found) {
-                std::cerr << "No Vulkan physical device with compute support found." << std::endl;
+                setLastError("No Vulkan physical device with compute support found.");
                 return false;
             }
             selected_device = devices[best_index];
@@ -2072,7 +2160,7 @@ namespace whyb {
             module_info.pCode = spirv.data();
             VkResult res = vkCreateShaderModule(device, &module_info, nullptr, &module);
             if (res != VK_SUCCESS) {
-                std::cerr << "vkCreateShaderModule failed with error " << res << "." << std::endl;
+                setLastError("vkCreateShaderModule failed with error " + std::to_string(res) + ".");
                 return false;
             }
             return true;
@@ -2090,7 +2178,7 @@ namespace whyb {
             pipeline_info.layout = pipelineLayout;
             VkResult res = vkCreateComputePipelines(device, (VkPipelineCache)VK_NULL_HANDLE, 1, &pipeline_info, nullptr, &pipeline);
             if (res != VK_SUCCESS) {
-                std::cerr << "vkCreateComputePipelines failed with error " << res << "." << std::endl;
+                setLastError("vkCreateComputePipelines failed with error " + std::to_string(res) + ".");
                 return false;
             }
             return true;
@@ -2102,7 +2190,7 @@ namespace whyb {
             auto* dl_manager = DynamicLibraryManager::instance();
             auto vulkan_driver = dl_manager->loadLibrary(vulkan_lib);
             if (!vulkan_driver) {
-                std::cerr << "Failed to load Vulkan driver library: " << vulkan_lib << std::endl;
+                setLastError("Failed to load Vulkan driver library: " + vulkan_lib + ".");
                 return false;
             }
             vkCreateInstance = (vkCreateInstance_t)(dl_manager->getFunction(vulkan_lib, "vkCreateInstance"));
@@ -2164,7 +2252,7 @@ namespace whyb {
                 !vkCmdDispatch || !vkCmdPipelineBarrier || !vkCmdCopyBuffer ||
                 !vkCreateBuffer || !vkDestroyBuffer || !vkGetBufferMemoryRequirements ||
                 !vkAllocateMemory || !vkFreeMemory || !vkBindBufferMemory || !vkMapMemory || !vkUnmapMemory) {
-                std::cerr << "Failed to load one or more Vulkan functions from: " << vulkan_lib << std::endl;
+                setLastError("Failed to load one or more Vulkan functions from: " + vulkan_lib + ".");
                 return false;
             }
             return true;
@@ -2183,7 +2271,7 @@ namespace whyb {
             instance_info.pApplicationInfo = &app_info;
             VkResult res = vkCreateInstance(&instance_info, nullptr, &instance);
             if (res != VK_SUCCESS) {
-                std::cerr << "vkCreateInstance failed with error " << res << "." << std::endl;
+                setLastError("vkCreateInstance failed with error " + std::to_string(res) + ".");
                 return false;
             }
 
@@ -2208,7 +2296,7 @@ namespace whyb {
                 }
             }
             if (queue_family == ~0u) {
-                std::cerr << "No compute-capable Vulkan queue family found." << std::endl;
+                setLastError("No compute-capable Vulkan queue family found.");
                 vkDestroyInstance(instance, nullptr);
                 instance = 0;
                 return false;
@@ -2227,7 +2315,7 @@ namespace whyb {
             device_info.pQueueCreateInfos = &queue_info;
             res = vkCreateDevice(physicalDevice, &device_info, nullptr, &device);
             if (res != VK_SUCCESS) {
-                std::cerr << "vkCreateDevice failed with error " << res << "." << std::endl;
+                setLastError("vkCreateDevice failed with error " + std::to_string(res) + ".");
                 vkDestroyInstance(instance, nullptr);
                 instance = 0;
                 return false;
@@ -2264,7 +2352,7 @@ namespace whyb {
             layout_info.pBindings = bindings;
             res = vkCreateDescriptorSetLayout(device, &layout_info, nullptr, &descriptorSetLayout);
             if (res != VK_SUCCESS) {
-                std::cerr << "vkCreateDescriptorSetLayout failed with error " << res << "." << std::endl;
+                setLastError("vkCreateDescriptorSetLayout failed with error " + std::to_string(res) + ".");
                 vkDestroyShaderModule(device, chw2hwcModule, nullptr);
                 vkDestroyShaderModule(device, hwc2chwModule, nullptr);
                 chw2hwcModule = 0;
@@ -2288,7 +2376,7 @@ namespace whyb {
             pipeline_layout_info.pPushConstantRanges = &push_range;
             res = vkCreatePipelineLayout(device, &pipeline_layout_info, nullptr, &pipelineLayout);
             if (res != VK_SUCCESS) {
-                std::cerr << "vkCreatePipelineLayout failed with error " << res << "." << std::endl;
+                setLastError("vkCreatePipelineLayout failed with error " + std::to_string(res) + ".");
                 vkDestroyDescriptorSetLayout(device, descriptorSetLayout, nullptr);
                 descriptorSetLayout = 0;
                 vkDestroyShaderModule(device, chw2hwcModule, nullptr);
@@ -2312,7 +2400,7 @@ namespace whyb {
             pool_info.pPoolSizes = &pool_size;
             res = vkCreateDescriptorPool(device, &pool_info, nullptr, &descriptorPool);
             if (res != VK_SUCCESS) {
-                std::cerr << "vkCreateDescriptorPool failed with error " << res << "." << std::endl;
+                setLastError("vkCreateDescriptorPool failed with error " + std::to_string(res) + ".");
                 vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
                 pipelineLayout = 0;
                 vkDestroyDescriptorSetLayout(device, descriptorSetLayout, nullptr);
@@ -2337,7 +2425,7 @@ namespace whyb {
             VkDescriptorSet sets[2] = { 0, 0 };
             res = vkAllocateDescriptorSets(device, &set_alloc_info, sets);
             if (res != VK_SUCCESS) {
-                std::cerr << "vkAllocateDescriptorSets failed with error " << res << "." << std::endl;
+                setLastError("vkAllocateDescriptorSets failed with error " + std::to_string(res) + ".");
                 vkDestroyDescriptorPool(device, descriptorPool, nullptr);
                 descriptorPool = 0;
                 vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
@@ -2400,7 +2488,7 @@ namespace whyb {
             cmd_pool_info.queueFamilyIndex = queue_family;
             res = vkCreateCommandPool(device, &cmd_pool_info, nullptr, &commandPool);
             if (res != VK_SUCCESS) {
-                std::cerr << "vkCreateCommandPool failed with error " << res << "." << std::endl;
+                setLastError("vkCreateCommandPool failed with error " + std::to_string(res) + ".");
                 vkDestroyPipeline(device, chw2hwcPipeline, nullptr);
                 vkDestroyPipeline(device, hwc2chwPipeline, nullptr);
                 chw2hwcPipeline = 0;
@@ -2426,61 +2514,62 @@ namespace whyb {
 
         static bool initAll() {
             std::lock_guard<std::mutex> lock(VulkanMutex);
-            if (initVulkanStatus == InitVulkanStatusEnum::Ready) {
+            setLastError("");
+            if (initVulkanStatus.load(std::memory_order_acquire) == InitVulkanStatusEnum::Ready) {
                 std::string glslang_module = findGlslangModuleName();
                 if (glslang_module.empty()) {
-                    std::cerr << "Could not find glslang library." << std::endl;
+                    setLastError("Could not find glslang library.");
                     lastVulkanErrorStr = "Could not find glslang library.";
-                    initVulkanStatus = InitVulkanStatusEnum::Failed;
+                    initVulkanStatus.store(InitVulkanStatusEnum::Failed, std::memory_order_release);
                     return false;
                 }
                 glslang_library_name = glslang_module;
                 if (!loadGlslangApi(glslang_module)) {
-                    std::cerr << "Failed to load glslang functions." << std::endl;
+                    setLastError("Failed to load glslang functions.");
                     lastVulkanErrorStr = "Failed to load glslang functions.";
-                    initVulkanStatus = InitVulkanStatusEnum::Failed;
+                    initVulkanStatus.store(InitVulkanStatusEnum::Failed, std::memory_order_release);
                     return false;
                 }
                 if (glslang_initialize_process() == 0) {
-                    std::cerr << "glslang_initialize_process failed." << std::endl;
+                    setLastError("glslang_initialize_process failed.");
                     lastVulkanErrorStr = "glslang_initialize_process failed.";
-                    initVulkanStatus = InitVulkanStatusEnum::Failed;
+                    initVulkanStatus.store(InitVulkanStatusEnum::Failed, std::memory_order_release);
                     return false;
                 }
                 std::vector<uint32_t> spv_hwc2chw;
                 std::vector<uint32_t> spv_chw2hwc;
                 if (!compileGLSLWithGlslang(glslang_module, vulkanHwc2ChwSource, spv_hwc2chw)) {
-                    std::cerr << "Compile Vulkan HWC->CHW shader failed." << std::endl;
+                    setLastError("Compile Vulkan HWC->CHW shader failed.");
                     lastVulkanErrorStr = "Compile Vulkan HWC->CHW shader failed.";
-                    initVulkanStatus = InitVulkanStatusEnum::Failed;
+                    initVulkanStatus.store(InitVulkanStatusEnum::Failed, std::memory_order_release);
                     return false;
                 }
                 if (!compileGLSLWithGlslang(glslang_module, vulkanChw2HwcSource, spv_chw2hwc)) {
-                    std::cerr << "Compile Vulkan CHW->HWC shader failed." << std::endl;
+                    setLastError("Compile Vulkan CHW->HWC shader failed.");
                     lastVulkanErrorStr = "Compile Vulkan CHW->HWC shader failed.";
-                    initVulkanStatus = InitVulkanStatusEnum::Failed;
+                    initVulkanStatus.store(InitVulkanStatusEnum::Failed, std::memory_order_release);
                     return false;
                 }
                 if (!initVulkanDriverAPI()) {
-                    std::cerr << "Failed to load Vulkan driver API functions." << std::endl;
+                    setLastError("Failed to load Vulkan driver API functions.");
                     lastVulkanErrorStr = "Failed to load Vulkan driver API functions.";
-                    initVulkanStatus = InitVulkanStatusEnum::Failed;
+                    initVulkanStatus.store(InitVulkanStatusEnum::Failed, std::memory_order_release);
                     return false;
                 }
                 if (!initVulkanFunctions(spv_hwc2chw, spv_chw2hwc)) {
-                    std::cerr << "Failed to initialize Vulkan device and pipelines." << std::endl;
+                    setLastError("Failed to initialize Vulkan device and pipelines.");
                     lastVulkanErrorStr = "Failed to initialize Vulkan device and pipelines.";
-                    initVulkanStatus = InitVulkanStatusEnum::Failed;
+                    initVulkanStatus.store(InitVulkanStatusEnum::Failed, std::memory_order_release);
                     return false;
                 }
-                initVulkanStatus = InitVulkanStatusEnum::Inited;
+                initVulkanStatus.store(InitVulkanStatusEnum::Inited, std::memory_order_release);
                 return true;
             }
-            else if (initVulkanStatus == InitVulkanStatusEnum::Inited) {
+            else if (initVulkanStatus.load(std::memory_order_acquire) == InitVulkanStatusEnum::Inited) {
                 return true;
             }
-            else if (initVulkanStatus == InitVulkanStatusEnum::Failed) {
-                std::cerr << "Vulkan Init Failed. Last error: " << lastVulkanErrorStr << std::endl;
+            else if (initVulkanStatus.load(std::memory_order_acquire) == InitVulkanStatusEnum::Failed) {
+                setLastError("Vulkan initialization failed. " + lastError());
                 return false;
             }
             return true;
@@ -2541,14 +2630,18 @@ namespace whyb {
                 dl_manager->unloadLibrary(glslang_library_name);
                 glslang_library_name.clear();
             }
-            initVulkanStatus = InitVulkanStatusEnum::Ready;
+            consecutiveVulkanFailures.store(0, std::memory_order_release);
+            initVulkanStatus.store(InitVulkanStatusEnum::Ready, std::memory_order_release);
             return true;
         }
 
     private:
-        inline static InitVulkanStatusEnum initVulkanStatus = InitVulkanStatusEnum::Ready;
+        inline static std::atomic<InitVulkanStatusEnum> initVulkanStatus = InitVulkanStatusEnum::Ready;
         inline static std::string lastVulkanErrorStr = "";
         inline static std::mutex VulkanMutex;
+        inline static std::mutex errorMutex;
+        inline static std::atomic<size_t> consecutiveVulkanFailures = 0;
+        static constexpr size_t maxConsecutiveVulkanFailures = 3;
 
         inline static std::string vulkan_library_name = "";
         inline static std::string glslang_library_name = "";

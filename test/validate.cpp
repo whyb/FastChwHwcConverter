@@ -57,7 +57,9 @@ void reference_hwc2chw(const size_t h, const size_t w, const size_t c,
                 value = value * alpha;
             }
             if (NeedNormalizedMeanStds) {
-                value = (value - mean[ch]) / stds[ch];
+                // The public normalization API carries RGB parameters only.
+                // RGBA reuses the final parameter set instead of reading past it.
+                value = (value - mean[(std::min)(ch, size_t(2))]) / stds[(std::min)(ch, size_t(2))];
             }
             if (NeedClamp) {
                 value = std::clamp(value, min_v, max_v);
@@ -92,9 +94,6 @@ void reference_chw2hwc(const size_t c, const size_t h, const size_t w,
 
 template <bool HasAlpha, bool NeedClamp, bool NeedNormalizedMeanStds>
 void check_cpu_hwc2chw(const size_t h, const size_t w, const size_t c) {
-    if (c > 3 && NeedNormalizedMeanStds) {
-        return; // normalization mean/stds only exist for up to 3 channels
-    }
     const size_t pixel_count = h * w * c;
     const auto src = whyb_test::random_u8(pixel_count);
     std::vector<float> cpu_out(pixel_count, -1.0f);
@@ -152,7 +151,7 @@ void validate_cpu() {
     // The last size exceeds the CPU backend parallel threshold so threaded
     // dispatch is also checked against the reference implementation.
     const size_t sizes[][2] = { { 3, 5 }, { 16, 16 }, { 33, 41 }, { 128, 512 } };
-    for (size_t si = 0; si < 3; ++si) {
+    for (size_t si = 0; si < 4; ++si) {
         const size_t h = sizes[si][0];
         const size_t w = sizes[si][1];
         for (const size_t c : { size_t(1), size_t(3), size_t(4) }) {

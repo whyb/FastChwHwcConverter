@@ -193,6 +193,9 @@ namespace whyb {
         * @param max_v Maximum value for clamping
         * @param mean Array of mean values for normalization
         * @param stds Array of standard deviation values for normalization
+        *
+        * Normalization parameters are RGB-only.  A fourth channel reuses the
+        * final parameter set to avoid reading outside the arrays.
         */
         template <typename Stype, typename Dtype,
                   bool HasAlpha = false,
@@ -211,7 +214,7 @@ namespace whyb {
                 if constexpr (NeedClamp) {
                     if constexpr (HasAlpha) {
                         if constexpr (NeedNormalizedMeanStds) {
-                            return clamp_cast<Dtype>((src_val * alpha - mean[channel]) / stds[channel], min_v, max_v);
+                            return clamp_cast<Dtype>((src_val * alpha - mean[(std::min)(channel, size_t(2))]) / stds[(std::min)(channel, size_t(2))], min_v, max_v);
                         }
                         else {
                             return clamp_cast<Dtype>(src_val * alpha, min_v, max_v);
@@ -219,7 +222,7 @@ namespace whyb {
                     }
                     else {
                         if constexpr (NeedNormalizedMeanStds) {
-                            return clamp_cast<Dtype>((src_val - mean[channel]) / stds[channel], min_v, max_v);
+                            return clamp_cast<Dtype>((src_val - mean[(std::min)(channel, size_t(2))]) / stds[(std::min)(channel, size_t(2))], min_v, max_v);
                         }
                         else {
                             return clamp_cast<Dtype>(src_val, min_v, max_v);
@@ -229,7 +232,7 @@ namespace whyb {
                 else {
                     if constexpr (HasAlpha) {
                         if constexpr (NeedNormalizedMeanStds) {
-                            return static_cast<Dtype>((src_val * alpha - mean[channel]) / stds[channel]);
+                            return static_cast<Dtype>((src_val * alpha - mean[(std::min)(channel, size_t(2))]) / stds[(std::min)(channel, size_t(2))]);
                         }
                         else {
                             return static_cast<Dtype>(src_val * alpha);
@@ -237,7 +240,7 @@ namespace whyb {
                     }
                     else {
                         if constexpr (NeedNormalizedMeanStds) {
-                            return static_cast<Dtype>((src_val - mean[channel]) / stds[channel]);
+                            return static_cast<Dtype>((src_val - mean[(std::min)(channel, size_t(2))]) / stds[(std::min)(channel, size_t(2))]);
                         }
                         else {
                             return static_cast<Dtype>(src_val);

@@ -22,9 +22,10 @@
 #include "DynamicLibraryManager.hpp"
 #include "FastChwHwcConverter.hpp"
 
-#include <iostream>
-#include <vector>
+#include <atomic>
+#include <cstdint>
 #include <string>
+#include <vector>
 #include <mutex>
 
 #ifdef _WIN32
@@ -35,6 +36,8 @@
 #include <unistd.h>
 #endif
 
+
+namespace whyb {
 
 // NVRTC enum type define
 typedef enum {
@@ -159,8 +162,7 @@ static const char* cudaSource = R"(
 
 )";
 
-namespace whyb {
-    enum struct InitCUDAStatusEnum : int
+enum struct InitCUDAStatusEnum : int
     {
         Ready = 0,
         Inited = 1,
@@ -182,6 +184,16 @@ namespace whyb {
     public:
         static bool init() { return initAll(); }
         static bool release() { return releaseAll(); }
+
+        // Query initialization state and the last backend error without
+        // requiring library-side terminal diagnostics.
+        static InitCUDAStatusEnum status() { return initCUDAStatus.load(std::memory_order_acquire); }
+        static std::string lastError()
+        {
+            std::lock_guard<std::mutex> lock(errorMutex);
+            return lastCUDAErrorStr;
+        }
+
     public:
         /**
         * @brief Converts image data from HWC format to CHW format
@@ -198,7 +210,7 @@ namespace whyb {
             const uint8_t* src, float* dst,
             const float alpha = 1.f / 255.f) {
             nvidia();
-            if (initCUDAStatus != InitCUDAStatusEnum::Inited) {
+            if (initCUDAStatus.load(std::memory_order_acquire) != InitCUDAStatusEnum::Inited) {
                 // use cpu
                 cpu::hwc2chw<uint8_t, float, true>(h, w, c, src, dst, alpha); return;
             }
@@ -214,20 +226,20 @@ namespace whyb {
             if (cuRes0 != 0 || cuRes1 != 0) {
                 cuMemFree(cuda_input_memory);
                 cuMemFree(cuda_output_memory);
-                cpu::hwc2chw<uint8_t, float, true>(h, w, c, src, dst, alpha); return;
+                fallbackToCpuHwc2chw(h, w, c, src, dst, alpha, "CUDA hwc2chw GPU execution failed"); return;
             }
             // copy host memory to device memory
             CUresult cuRes2 = cuMemcpyHtoD(cuda_input_memory, src, input_size);
             if (cuRes2 != 0) {
                 cuMemFree(cuda_input_memory);
                 cuMemFree(cuda_output_memory);
-                cpu::hwc2chw<uint8_t, float, true>(h, w, c, src, dst, alpha); return;
+                fallbackToCpuHwc2chw(h, w, c, src, dst, alpha, "CUDA hwc2chw GPU execution failed"); return;
             }
             // call cuda function
             if (hwc2chwCUDAFun == nullptr) {
                 cuMemFree(cuda_input_memory);
                 cuMemFree(cuda_output_memory);
-                cpu::hwc2chw<uint8_t, float, true>(h, w, c, src, dst, alpha); return;
+                fallbackToCpuHwc2chw(h, w, c, src, dst, alpha, "CUDA hwc2chw GPU execution failed"); return;
             }
             const unsigned int blockDimX = 32, blockDimY = 32, blockDimZ = 1;
             const unsigned int gridDimX = ((unsigned int)w + blockDimX - 1) / blockDimX;
@@ -246,7 +258,7 @@ namespace whyb {
             if (cuRes3 != 0) {
                 cuMemFree(cuda_input_memory);
                 cuMemFree(cuda_output_memory);
-                cpu::hwc2chw<uint8_t, float, true>(h, w, c, src, dst, alpha); return;
+                fallbackToCpuHwc2chw(h, w, c, src, dst, alpha, "CUDA hwc2chw GPU execution failed"); return;
             }
             // copy device memory to host memory; the synchronous copy also
             // guarantees the kernel has finished before the function returns
@@ -254,10 +266,11 @@ namespace whyb {
             if (cuRes4 != 0) {
                 cuMemFree(cuda_input_memory);
                 cuMemFree(cuda_output_memory);
-                cpu::hwc2chw<uint8_t, float, true>(h, w, c, src, dst, alpha); return;
+                fallbackToCpuHwc2chw(h, w, c, src, dst, alpha, "CUDA hwc2chw GPU execution failed"); return;
             }
             cuMemFree(cuda_input_memory);
             cuMemFree(cuda_output_memory);
+            clearCallFailures();
             return;
         }
 
@@ -276,9 +289,9 @@ namespace whyb {
             const float* src, uint8_t* dst,
             const uint8_t alpha = 255.0f) {
             nvidia();
-            if (initCUDAStatus != InitCUDAStatusEnum::Inited) {
+            if (initCUDAStatus.load(std::memory_order_acquire) != InitCUDAStatusEnum::Inited) {
                 // use cpu
-                cpu::chw2hwc<float, uint8_t, true>(c, h, w, src, dst, alpha); return;
+                cpu::chw2hwc<float, uint8_t, true, true>(c, h, w, src, dst, alpha); return;
             }
             // use cuda
             const size_t pixel_size = h * w * c;
@@ -292,20 +305,20 @@ namespace whyb {
             if (cuRes0 != 0 || cuRes1 != 0) {
                 cuMemFree(cuda_input_memory);
                 cuMemFree(cuda_output_memory);
-                cpu::chw2hwc<float, uint8_t, true>(h, w, c, src, dst, alpha); return;
+                fallbackToCpuChw2hwc(c, h, w, src, dst, alpha, "CUDA chw2hwc GPU execution failed"); return;
             }
             // copy host memory to device memory
             CUresult cuRes2 = cuMemcpyHtoD(cuda_input_memory, src, input_size);
             if (cuRes2 != 0) {
                 cuMemFree(cuda_input_memory);
                 cuMemFree(cuda_output_memory);
-                cpu::chw2hwc<float, uint8_t, true>(h, w, c, src, dst, alpha); return;
+                fallbackToCpuChw2hwc(c, h, w, src, dst, alpha, "CUDA chw2hwc GPU execution failed"); return;
             }
             // call cuda function
             if (chw2hwcCUDAFun == nullptr) {
                 cuMemFree(cuda_input_memory);
                 cuMemFree(cuda_output_memory);
-                cpu::chw2hwc<float, uint8_t, true>(h, w, c, src, dst, alpha); return;
+                fallbackToCpuChw2hwc(c, h, w, src, dst, alpha, "CUDA chw2hwc GPU execution failed"); return;
             }
             const unsigned int blockDimX = 32, blockDimY = 32, blockDimZ = 1;
             const unsigned int gridDimX = ((unsigned int)w + blockDimX - 1) / blockDimX;
@@ -324,7 +337,7 @@ namespace whyb {
             if (cuRes3 != 0) {
                 cuMemFree(cuda_input_memory);
                 cuMemFree(cuda_output_memory);
-                cpu::chw2hwc<float, uint8_t, true>(h, w, c, src, dst, alpha); return;
+                fallbackToCpuChw2hwc(c, h, w, src, dst, alpha, "CUDA chw2hwc GPU execution failed"); return;
             }
             // copy device memory to host memory; the synchronous copy also
             // guarantees the kernel has finished before the function returns
@@ -332,10 +345,11 @@ namespace whyb {
             if (cuRes4 != 0) {
                 cuMemFree(cuda_input_memory);
                 cuMemFree(cuda_output_memory);
-                cpu::chw2hwc<float, uint8_t, true>(h, w, c, src, dst, alpha); return;
+                fallbackToCpuChw2hwc(c, h, w, src, dst, alpha, "CUDA chw2hwc GPU execution failed"); return;
             }
             cuMemFree(cuda_input_memory);
             cuMemFree(cuda_output_memory);
+            clearCallFailures();
             return;
         }
 
@@ -355,6 +369,10 @@ namespace whyb {
             CUdeviceptr src, CUdeviceptr dst,
             const float alpha = 1.f / 255.f) {
             nvidia();
+            if (initCUDAStatus.load(std::memory_order_acquire) != InitCUDAStatusEnum::Inited) {
+                setLastError("CUDA device-memory hwc2chw called before successful initialization.");
+                return;
+            }
             const size_t pixel_size = h * w * c;
             const size_t input_size = pixel_size * sizeof(uint8_t);
             const size_t output_size = pixel_size * sizeof(float);
@@ -374,12 +392,15 @@ namespace whyb {
                 blockDimX, blockDimY, blockDimZ,
                 0, nullptr, args1, nullptr);
             if (cuRes0 != 0) {
+                recordCallFailure("CUDA device-memory hwc2chw launch failed");
                 return;
             }
             CUresult cuRes1 = cuCtxSynchronize();
             if (cuRes1 != 0) {
+                recordCallFailure("CUDA device-memory hwc2chw synchronization failed");
                 return;
             }
+            clearCallFailures();
             return;
         }
 
@@ -398,6 +419,10 @@ namespace whyb {
             CUdeviceptr src, CUdeviceptr dst,
             const uint8_t alpha = 255.0f) {
             nvidia();
+            if (initCUDAStatus.load(std::memory_order_acquire) != InitCUDAStatusEnum::Inited) {
+                setLastError("CUDA device-memory chw2hwc called before successful initialization.");
+                return;
+            }
             const unsigned int blockDimX = 32, blockDimY = 32, blockDimZ = 1;
             const unsigned int gridDimX = ((unsigned int)w + blockDimX - 1) / blockDimX;
             const unsigned int gridDimY = ((unsigned int)h + blockDimY - 1) / blockDimY;
@@ -413,15 +438,62 @@ namespace whyb {
                 blockDimX, blockDimY, blockDimZ,
                 0, nullptr, args, nullptr);
             if (cuRes0 != 0) {
+                recordCallFailure("CUDA device-memory chw2hwc launch failed");
                 return;
             }
             CUresult cuRes1 = cuCtxSynchronize();
             if (cuRes1 != 0) {
+                recordCallFailure("CUDA device-memory chw2hwc synchronization failed");
                 return;
             }
+            clearCallFailures();
             return;
         }
     private:
+        // GPU and CPU fallback kernels clamp float->uint8 values before the
+        // narrow.  This avoids undefined behavior and keeps results identical.
+        static void fallbackToCpuHwc2chw(size_t h, size_t w, size_t c,
+            const uint8_t* src, float* dst, float alpha, const char* message)
+        {
+            recordCallFailure(message);
+            cpu::hwc2chw<uint8_t, float, true>(h, w, c, src, dst, alpha);
+        }
+
+        static void fallbackToCpuChw2hwc(size_t c, size_t h, size_t w,
+            const float* src, uint8_t* dst, uint8_t alpha, const char* message)
+        {
+            recordCallFailure(message);
+            cpu::chw2hwc<float, uint8_t, true, true>(c, h, w, src, dst, alpha);
+        }
+
+        static void setLastError(const std::string& message)
+        {
+            std::lock_guard<std::mutex> lock(errorMutex);
+            lastCUDAErrorStr = message;
+        }
+
+        // Repeated transient failures stop repeated expensive GPU attempts.
+        // The backend remains available after release()/init() resets state.
+        static void recordCallFailure(const std::string& message)
+        {
+            const auto failures = ++consecutiveCUDAFailures;
+            const std::string fullMessage = message + " (consecutive CUDA failures: " +
+                std::to_string(failures) + ").";
+            setLastError(fullMessage);
+
+            if (failures >= maxConsecutiveCUDAFailures)
+            {
+                std::lock_guard<std::mutex> lock(CUDAMutex);
+                initCUDAStatus.store(InitCUDAStatusEnum::Failed, std::memory_order_release);
+                setLastError(fullMessage + " CUDA backend disabled until release()/init().");
+            }
+        }
+
+        static void clearCallFailures()
+        {
+            consecutiveCUDAFailures.store(0, std::memory_order_release);
+        }
+
         static std::string compileCUDAWithNVRTC(const std::string& libraryName, const std::string& cudaSource)
         {
             // dynamic load NVRTC lib
@@ -429,7 +501,7 @@ namespace whyb {
             auto nvrtcLib = dlManager->loadLibrary(libraryName);
             if (!nvrtcLib)
             {
-                std::cerr << "Failed to load NVRTC library: " << libraryName << std::endl;
+                setLastError("Failed to load NVRTC library: " + libraryName + ".");
                 return "";
             }
 
@@ -448,7 +520,7 @@ namespace whyb {
                 !nvrtcGetPTX_fun || !nvrtcDestroyProgram_fun || !nvrtcGetProgramLogSize_fun ||
                 !nvrtcGetProgramLog_fun || !nvrtcGetErrorString_fun)
             {
-                std::cerr << "Failed to load NVRTC functions from: " << libraryName << std::endl;
+                setLastError("Failed to load NVRTC functions from: " + libraryName + ".");
                 dlManager->unloadLibrary(libraryName);
                 return "";
             }
@@ -458,7 +530,7 @@ namespace whyb {
             nvrtcResult res = nvrtcCreateProgram_fun(&prog, cudaSource.c_str(), "FastChwHwcConverterCuda.cu", 0, nullptr, nullptr);
             if (res != NVRTC_SUCCESS)
             {
-                std::cerr << "nvrtcCreateProgram failed: " << nvrtcGetErrorString_fun(res) << std::endl;
+                setLastError(std::string("nvrtcCreateProgram failed: ") + nvrtcGetErrorString_fun(res));
                 dlManager->unloadLibrary(libraryName);
                 return "";
             }
@@ -472,7 +544,7 @@ namespace whyb {
                 nvrtcGetProgramLogSize_fun(prog, &logSize);
                 std::string log(logSize, '\0');
                 nvrtcGetProgramLog_fun(prog, &log[0]);
-                std::cerr << "CUDA Compile error: " << log << std::endl;
+                setLastError("CUDA Compile error: " + log);
                 nvrtcDestroyProgram_fun(&prog);
                 dlManager->unloadLibrary(libraryName);
                 return "";
@@ -498,7 +570,7 @@ namespace whyb {
             char currentDir[MAX_PATH] = { 0 };
             if (GetModuleFileNameA(nullptr, currentDir, MAX_PATH) == 0)
             {
-                std::cerr << "Failed to get current directory on Windows." << std::endl;
+                setLastError("Failed to get current directory on Windows.");
                 return "";
             }
 
@@ -512,7 +584,7 @@ namespace whyb {
             char currentDir[PATH_MAX] = { 0 };
             if (readlink("/proc/self/exe", currentDir, PATH_MAX) == -1)
             {
-                std::cerr << "Failed to get current directory on Linux." << std::endl;
+                setLastError("Failed to get current directory on Linux.");
                 return "";
             }
 
@@ -561,7 +633,7 @@ namespace whyb {
             }
 #endif
 
-            std::cerr << "No suitable NVRTC library found in the current executable directory: " << executablePath << std::endl;
+            setLastError("No suitable NVRTC library found in the current executable directory: " + executablePath + ".");
             return "";
         }
 
@@ -576,7 +648,7 @@ namespace whyb {
             auto driverLib = dlManager->loadLibrary(driver_dll);
             if (!driverLib)
             {
-                std::cerr << "Failed to load NVIDIA Driver API library: " << driver_dll << std::endl;
+                setLastError("Failed to load NVIDIA Driver API library: " + driver_dll + ".");
                 return false;
             }
             cuInit = (cuInit_t)(dlManager->getFunction(driver_dll, "cuInit"));
@@ -605,7 +677,7 @@ namespace whyb {
                 !cuMemAlloc || !cuMemAllocHost ||
                 !cuMemFree || !cuMemFreeHost ||
                 !cuMemcpyHtoD || !cuMemcpyDtoH) {
-                std::cerr << "Failed to load one or more CUDA Driver API functions." << std::endl;
+                setLastError("Failed to load one or more CUDA Driver API functions.");
                 return false;
             }
             return true;
@@ -615,30 +687,30 @@ namespace whyb {
         {
             CUresult cuRes = cuInit(0);
             if (cuRes != 0) {
-                std::cerr << "cuInit failed with error " << cuRes << std::endl;
+                setLastError("cuInit failed with error " + std::to_string(cuRes) + ".");
                 return false;
             }
             CUdevice device;
             cuRes = cuDeviceGet(&device, 0);
             if (cuRes != 0) {
-                std::cerr << "cuDeviceGet failed with error " << cuRes << std::endl;
+                setLastError("cuDeviceGet failed with error " + std::to_string(cuRes) + ".");
                 return false;
             }
             cuRes = cuCtxCreate(&context, 0, device);
             if (cuRes != 0) {
-                std::cerr << "cuCtxCreate failed with error " << cuRes << std::endl;
+                setLastError("cuCtxCreate failed with error " + std::to_string(cuRes) + ".");
                 return false;
             }
             cuRes = cuStreamCreate(&cudastream, 0); //flag: CU_STREAM_DEFAULT = 0
             if (cuRes != 0) {
-                std::cerr << "cuStreamCreate failed with error " << cuRes << std::endl;
+                setLastError("cuStreamCreate failed with error " + std::to_string(cuRes) + ".");
                 return false;
             }
 
             // Load PTX module to GPU Memory
             cuRes = cuModuleLoadDataEx(&cudamodule, compiledPtxStr.c_str(), 0, nullptr, nullptr);
             if (cuRes != 0) {
-                std::cerr << "cuModuleLoadDataEx failed with error " << cuRes << std::endl;
+                setLastError("cuModuleLoadDataEx failed with error " + std::to_string(cuRes) + ".");
                 cuCtxDestroy(context);
                 cuStreamDestroy(cudastream);
                 return false;
@@ -647,7 +719,7 @@ namespace whyb {
             // Get cuda module kernel function(cuda_hwc2chw)
             cuRes = cuModuleGetFunction(&hwc2chwCUDAFun, cudamodule, "cuda_hwc2chw");
             if (cuRes != 0) {
-                std::cerr << "cuModuleGetFunction (cuda_hwc2chw) failed with error " << cuRes << std::endl;
+                setLastError("cuModuleGetFunction (cuda_hwc2chw) failed with error " + std::to_string(cuRes) + ".");
                 cuModuleUnload(cudamodule);
                 cuCtxDestroy(context);
                 cuStreamDestroy(cudastream);
@@ -656,7 +728,7 @@ namespace whyb {
             // Get cuda module kernel function(cuda_chw2hwc)
             cuRes = cuModuleGetFunction(&chw2hwcCUDAFun, cudamodule, "cuda_chw2hwc");
             if (cuRes != 0) {
-                std::cerr << "cuModuleGetFunction (cuda_chw2hwc) failed with error " << cuRes << std::endl;
+                setLastError("cuModuleGetFunction (cuda_chw2hwc) failed with error " + std::to_string(cuRes) + ".");
                 cuModuleUnload(cudamodule);
                 cuCtxDestroy(context);
                 cuStreamDestroy(cudastream);
@@ -668,43 +740,44 @@ namespace whyb {
         static bool initAll()
         {
             std::lock_guard<std::mutex> lock(CUDAMutex);
-            if (initCUDAStatus == InitCUDAStatusEnum::Ready) {
+            setLastError("");
+            if (initCUDAStatus.load(std::memory_order_acquire) == InitCUDAStatusEnum::Ready) {
                 std::string nvrtc_module_filename = findNVRTCModuleName();
                 if (nvrtc_module_filename.empty()) {
-                    std::cerr << "Could not found CUDA NVRTC dll failed." << std::endl;
+                    setLastError("Could not find a suitable CUDA NVRTC library.");
                     lastCUDAErrorStr = "Could not found CUDA NVRTC dll failed.";
-                    initCUDAStatus = InitCUDAStatusEnum::Failed;
+                    initCUDAStatus.store(InitCUDAStatusEnum::Failed, std::memory_order_release);
                     return false;
                 }
                 std::string ptx_str = compileCUDAWithNVRTC(nvrtc_module_filename, cudaSource);
                 if (ptx_str.empty()) {
-                    std::cerr << "Compile CUDA Source code failed." << std::endl;
+                    setLastError("Compile CUDA source code failed.");
                     lastCUDAErrorStr = "Compile CUDA Source code failed.";
-                    initCUDAStatus = InitCUDAStatusEnum::Failed;
+                    initCUDAStatus.store(InitCUDAStatusEnum::Failed, std::memory_order_release);
                     return false;
                 }
                 bool init_cuda_driver = initCudaDriverAPI();
                 if (!init_cuda_driver) {
-                    std::cerr << "Failed to load CUDA Driver API functions." << std::endl;
+                    setLastError("Failed to initialize the CUDA driver functions.");
                     lastCUDAErrorStr = "Failed to load CUDA Driver API functions.";
-                    initCUDAStatus = InitCUDAStatusEnum::Failed;
+                    initCUDAStatus.store(InitCUDAStatusEnum::Failed, std::memory_order_release);
                     return false;
                 }
                 bool init_cuda_functions = initCudaFunctions(ptx_str);
                 if (!init_cuda_functions) {
-                    std::cerr << "Failed to load CUDA Driver API functions." << std::endl;
+                    setLastError("Failed to initialize the CUDA driver functions.");
                     lastCUDAErrorStr = "Failed to load CUDA Driver API functions.";
-                    initCUDAStatus = InitCUDAStatusEnum::Failed;
+                    initCUDAStatus.store(InitCUDAStatusEnum::Failed, std::memory_order_release);
                     return false;
                 }
-                initCUDAStatus = InitCUDAStatusEnum::Inited;
+                initCUDAStatus.store(InitCUDAStatusEnum::Inited, std::memory_order_release);
                 return true;
             }
-            else if (initCUDAStatus == InitCUDAStatusEnum::Inited) {
+            else if (initCUDAStatus.load(std::memory_order_acquire) == InitCUDAStatusEnum::Inited) {
                 return true;
             }
-            else if (initCUDAStatus == InitCUDAStatusEnum::Failed) {
-                std::cerr << "Init Failed. Last error: " << lastCUDAErrorStr << std::endl;
+            else if (initCUDAStatus.load(std::memory_order_acquire) == InitCUDAStatusEnum::Failed) {
+                setLastError("CUDA initialization failed. " + lastError());
                 return false;
             }
             return true;
@@ -712,19 +785,25 @@ namespace whyb {
 
         static bool releaseAll()
         {
+            std::lock_guard<std::mutex> lock(CUDAMutex);
+            if (initCUDAStatus.load(std::memory_order_acquire) != InitCUDAStatusEnum::Inited)
+            {
+                return true;
+            }
+
             CUresult cuRes = cuModuleUnload(cudamodule);
             if (cuRes != 0) {
-                std::cerr << "cuModuleUnload failed with error " << cuRes << std::endl;
+                setLastError("cuModuleUnload failed with error " + std::to_string(cuRes) + ".");
                 return false;
             }
             cuRes = cuStreamDestroy(cudastream);
             if (cuRes != 0) {
-                std::cerr << "cuStreamDestroy failed with error " << cuRes << std::endl;
+                setLastError("cuStreamDestroy failed with error " + std::to_string(cuRes) + ".");
                 return false;
             }
             cuRes = cuCtxDestroy(context);
             if (cuRes != 0) {
-                std::cerr << "cuCtxDestroy failed with error " << cuRes << std::endl;
+                setLastError("cuCtxDestroy failed with error " + std::to_string(cuRes) + ".");
                 return false;
             }
             auto* dlManager = whyb::DynamicLibraryManager::instance();
@@ -734,12 +813,17 @@ namespace whyb {
             const std::string driver_dll = "libcuda.so";
 #endif
             dlManager->unloadLibrary(driver_dll);
+            consecutiveCUDAFailures.store(0, std::memory_order_release);
+            initCUDAStatus.store(InitCUDAStatusEnum::Ready, std::memory_order_release);
             return true;
         }
     private:
-        inline static InitCUDAStatusEnum initCUDAStatus = InitCUDAStatusEnum::Ready;
+        inline static std::atomic<InitCUDAStatusEnum> initCUDAStatus = InitCUDAStatusEnum::Ready;
         inline static std::string lastCUDAErrorStr = "";
         inline static std::mutex CUDAMutex;
+        inline static std::mutex errorMutex;
+        inline static std::atomic<size_t> consecutiveCUDAFailures = 0;
+        static constexpr size_t maxConsecutiveCUDAFailures = 3;
 
         inline static CUfunction hwc2chwCUDAFun = nullptr;
         inline static CUfunction chw2hwcCUDAFun = nullptr;

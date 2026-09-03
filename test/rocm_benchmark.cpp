@@ -6,6 +6,8 @@
 #include "FastChwHwcConverterROCm.hpp"
 #include "benchmark_util.hpp"
 
+using namespace whyb;
+
 #define TEST_COUNT 10000
 #define WARMUP_COUNT 1000
 #define REPEAT_COUNT 3
@@ -37,10 +39,10 @@ int main() {
             const std::vector<uint8_t> host_src_u8 = whyb_test::random_u8(pixel_size);
             const std::vector<float> host_src_f32 = whyb_test::random_f32(pixel_size, 0.0f, 1.0f);
 
-            hipDeviceptr_t src_uint8 = 0;   // HWC uint8 input  -> CHW float (hwc2chw dst)
-            hipDeviceptr_t src_float = 0;   // CHW float input  -> HWC uint8 (chw2hwc dst)
-            hipDeviceptr_t out_float = 0;
-            hipDeviceptr_t out_uint8 = 0;
+            whyb::hipDeviceptr_t src_uint8 = 0;   // HWC uint8 input  -> CHW float (hwc2chw dst)
+            whyb::hipDeviceptr_t src_float = 0;   // CHW float input  -> HWC uint8 (chw2hwc dst)
+            whyb::hipDeviceptr_t out_float = 0;
+            whyb::hipDeviceptr_t out_uint8 = 0;
             hipMalloc(&src_uint8, pixel_size * sizeof(uint8_t));
             hipMalloc(&src_float, pixel_size * sizeof(float));
             hipMalloc(&out_float, pixel_size * sizeof(float));

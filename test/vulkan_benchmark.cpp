@@ -6,6 +6,8 @@
 #include "FastChwHwcConverterVulkan.hpp"
 #include "benchmark_util.hpp"
 
+using namespace whyb;
+
 #define TEST_COUNT 10000
 #define WARMUP_COUNT 1000
 #define REPEAT_COUNT 3

@@ -22,9 +22,10 @@
 #include "DynamicLibraryManager.hpp"
 #include "FastChwHwcConverter.hpp"
 
-#include <iostream>
-#include <vector>
+#include <atomic>
+#include <cstdint>
 #include <string>
+#include <vector>
 #include <mutex>
 
 #ifdef _WIN32
@@ -34,6 +35,8 @@
 #include <dirent.h>
 #include <unistd.h>
 #endif
+
+namespace whyb {
 
 // HIPRTC enum type define
 typedef enum {
@@ -198,8 +201,7 @@ extern "C" __global__ void rocm_chw2hwc(const size_t c, const size_t h, const si
 
 )";
 
-namespace whyb {
-    enum struct InitROCmStatusEnum : int
+enum struct InitROCmStatusEnum : int
     {
         Ready = 0,
         Inited = 1,
@@ -222,6 +224,16 @@ namespace whyb {
     public:
         static bool init() { return initAll(); }
         static bool release() { return releaseAll(); }
+
+        // Query initialization state and the last backend error without
+        // requiring library-side terminal diagnostics.
+        static InitROCmStatusEnum status() { return initROCmStatus.load(std::memory_order_acquire); }
+        static std::string lastError()
+        {
+            std::lock_guard<std::mutex> lock(errorMutex);
+            return lastROCmErrorStr;
+        }
+
     public:
         /**
          * @brief Converts image data from HWC format to CHW format
@@ -238,7 +250,7 @@ namespace whyb {
             const uint8_t* src, float* dst,
             const float alpha = 1.f / 255.f) {
             amd();
-            if (initROCmStatus != InitROCmStatusEnum::Inited) {
+            if (initROCmStatus.load(std::memory_order_acquire) != InitROCmStatusEnum::Inited) {
                 // use cpu
                 cpu::hwc2chw<uint8_t, float, true>(h, w, c, src, dst, alpha); return;
             }
@@ -257,7 +269,7 @@ namespace whyb {
             if (hipRes0 != 0 || hipRes1 != 0) {
                 hipFreeAsync(rocm_input_memory, rocmstream);
                 hipFreeAsync(rocm_output_memory, rocmstream);
-                cpu::hwc2chw<uint8_t, float, true>(h, w, c, src, dst, alpha);
+                fallbackToCpuHwc2chw(h, w, c, src, dst, alpha, "ROCm hwc2chw GPU execution failed");
                 return;
             }
 
@@ -267,7 +279,7 @@ namespace whyb {
             if (hipRes2 != 0) {
                 hipFreeAsync(rocm_input_memory, rocmstream);
                 hipFreeAsync(rocm_output_memory, rocmstream);
-                cpu::hwc2chw<uint8_t, float, true>(h, w, c, src, dst, alpha);
+                fallbackToCpuHwc2chw(h, w, c, src, dst, alpha, "ROCm hwc2chw GPU execution failed");
                 return;
             }
 
@@ -290,7 +302,7 @@ namespace whyb {
             if (hipRes3 != 0) {
                 hipFreeAsync(rocm_input_memory, rocmstream);
                 hipFreeAsync(rocm_output_memory, rocmstream);
-                cpu::hwc2chw<uint8_t, float, true>(h, w, c, src, dst, alpha);
+                fallbackToCpuHwc2chw(h, w, c, src, dst, alpha, "ROCm hwc2chw GPU execution failed");
                 return;
             }
 
@@ -300,7 +312,7 @@ namespace whyb {
             if (hipRes5 != 0) {
                 hipFreeAsync(rocm_input_memory, rocmstream);
                 hipFreeAsync(rocm_output_memory, rocmstream);
-                cpu::hwc2chw<uint8_t, float, true>(h, w, c, src, dst, alpha);
+                fallbackToCpuHwc2chw(h, w, c, src, dst, alpha, "ROCm hwc2chw GPU execution failed");
                 return;
             }
 
@@ -312,9 +324,10 @@ namespace whyb {
             hipError_t hipRes4 = hipStreamSynchronize(rocmstream);
 
             if (hipRes4 != 0) {
-                cpu::hwc2chw<uint8_t, float, true>(h, w, c, src, dst, alpha);
+                recordCallFailure("ROCm hwc2chw synchronization failed");
                 return;
             }
+            clearCallFailures();
         }
 
         /**
@@ -332,9 +345,9 @@ namespace whyb {
             const float* src, uint8_t* dst,
             const uint8_t alpha = 255.0f) {
             amd();
-            if (initROCmStatus != InitROCmStatusEnum::Inited) {
+            if (initROCmStatus.load(std::memory_order_acquire) != InitROCmStatusEnum::Inited) {
                 // use cpu
-                cpu::chw2hwc<float, uint8_t, true>(h, w, c, src, dst, alpha); return;
+                cpu::chw2hwc<float, uint8_t, true, true>(c, h, w, src, dst, alpha); return;
             }
             // use rocm
             const size_t pixel_size = h * w * c;
@@ -350,7 +363,7 @@ namespace whyb {
             if (hipRes0 != 0 || hipRes1 != 0) {
                 hipFreeAsync(rocm_input_memory, rocmstream);
                 hipFreeAsync(rocm_output_memory, rocmstream);
-                cpu::chw2hwc<float, uint8_t, true>(h, w, c, src, dst, alpha); return;
+                fallbackToCpuChw2hwc(c, h, w, src, dst, alpha, "ROCm chw2hwc GPU execution failed"); return;
             }
 
             // Copy host memory to device memory
@@ -359,7 +372,7 @@ namespace whyb {
             if (hipRes2 != 0) {
                 hipFreeAsync(rocm_input_memory, rocmstream);
                 hipFreeAsync(rocm_output_memory, rocmstream);
-                cpu::chw2hwc<float, uint8_t, true>(h, w, c, src, dst, alpha); return;
+                fallbackToCpuChw2hwc(c, h, w, src, dst, alpha, "ROCm chw2hwc GPU execution failed"); return;
             }
 
             // Call kernel
@@ -383,7 +396,7 @@ namespace whyb {
             if (hipRes3 != 0) {
                 hipFreeAsync(rocm_input_memory, rocmstream);
                 hipFreeAsync(rocm_output_memory, rocmstream);
-                cpu::chw2hwc<float, uint8_t, true>(h, w, c, src, dst, alpha); return;
+                fallbackToCpuChw2hwc(c, h, w, src, dst, alpha, "ROCm chw2hwc GPU execution failed"); return;
             }
 
             // Copy device memory to host memory
@@ -392,18 +405,20 @@ namespace whyb {
             if (hipRes5 != 0) {
                 hipFreeAsync(rocm_input_memory, rocmstream);
                 hipFreeAsync(rocm_output_memory, rocmstream);
-                cpu::chw2hwc<float, uint8_t, true>(h, w, c, src, dst, alpha); return;
+                fallbackToCpuChw2hwc(c, h, w, src, dst, alpha, "ROCm chw2hwc GPU execution failed"); return;
             }
 
             // Free memory
             hipFreeAsync(rocm_input_memory, rocmstream);
             hipFreeAsync(rocm_output_memory, rocmstream);
-
             hipError_t hipRes4 = hipStreamSynchronize(rocmstream);
 
             if (hipRes4 != 0) {
-                cpu::chw2hwc<float, uint8_t, true>(h, w, c, src, dst, alpha); return;
+
+                recordCallFailure("ROCm chw2hwc synchronization failed");
+                return;
             }
+            clearCallFailures();
         }
 
         /**
@@ -421,6 +436,10 @@ namespace whyb {
             hipDeviceptr_t src, hipDeviceptr_t dst,
             const float alpha = 1.f / 255.f) {
             amd();
+            if (initROCmStatus.load(std::memory_order_acquire) != InitROCmStatusEnum::Inited) {
+                setLastError("ROCm device-memory hwc2chw called before successful initialization.");
+                return;
+            }
             const size_t pixel_size = h * w * c;
             const size_t input_size = pixel_size * sizeof(uint8_t);
             const size_t output_size = pixel_size * sizeof(float);
@@ -441,12 +460,15 @@ namespace whyb {
                 blockDimX, blockDimY, blockDimZ,
                 0, rocmstream, args, nullptr);
             if (hipRes0 != 0) {
+                recordCallFailure("ROCm device-memory hwc2chw launch failed");
                 return;
             }
             hipError_t hipRes1 = hipStreamSynchronize(rocmstream);
             if (hipRes1 != 0) {
+                recordCallFailure("ROCm device-memory hwc2chw synchronization failed");
                 return;
             }
+            clearCallFailures();
             return;
         }
 
@@ -465,6 +487,10 @@ namespace whyb {
             hipDeviceptr_t src, hipDeviceptr_t dst,
             const uint8_t alpha = 255.0f) {
             amd();
+            if (initROCmStatus.load(std::memory_order_acquire) != InitROCmStatusEnum::Inited) {
+                setLastError("ROCm device-memory chw2hwc called before successful initialization.");
+                return;
+            }
             const unsigned int blockDimX = 32, blockDimY = 32, blockDimZ = 1;
             const unsigned int gridDimX = ((unsigned int)w + blockDimX - 1) / blockDimX;
             const unsigned int gridDimY = ((unsigned int)h + blockDimY - 1) / blockDimY;
@@ -481,12 +507,15 @@ namespace whyb {
                 blockDimX, blockDimY, blockDimZ,
                 0, rocmstream, args, nullptr);
             if (hipRes0 != 0) {
+                recordCallFailure("ROCm device-memory chw2hwc launch failed");
                 return;
             }
             hipError_t hipRes1 = hipStreamSynchronize(rocmstream);
             if (hipRes1 != 0) {
+                recordCallFailure("ROCm device-memory chw2hwc synchronization failed");
                 return;
             }
+            clearCallFailures();
             return;
         }
 
@@ -502,6 +531,50 @@ namespace whyb {
         #endif
         }
 
+        // GPU and CPU fallback kernels clamp float->uint8 values before the
+        // narrow.  This avoids undefined behavior and keeps results identical.
+        static void fallbackToCpuHwc2chw(size_t h, size_t w, size_t c,
+            const uint8_t* src, float* dst, float alpha, const char* message)
+        {
+            recordCallFailure(message);
+            cpu::hwc2chw<uint8_t, float, true>(h, w, c, src, dst, alpha);
+        }
+
+        static void fallbackToCpuChw2hwc(size_t c, size_t h, size_t w,
+            const float* src, uint8_t* dst, uint8_t alpha, const char* message)
+        {
+            recordCallFailure(message);
+            cpu::chw2hwc<float, uint8_t, true, true>(c, h, w, src, dst, alpha);
+        }
+
+        static void setLastError(const std::string& message)
+        {
+            std::lock_guard<std::mutex> lock(errorMutex);
+            lastROCmErrorStr = message;
+        }
+
+        // Repeated transient failures stop repeated expensive GPU attempts.
+        // The backend remains available after release()/init() resets state.
+        static void recordCallFailure(const std::string& message)
+        {
+            const auto failures = ++consecutiveROCmFailures;
+            const std::string fullMessage = message + " (consecutive ROCm failures: " +
+                std::to_string(failures) + ").";
+            setLastError(fullMessage);
+
+            if (failures >= maxConsecutiveROCmFailures)
+            {
+                std::lock_guard<std::mutex> lock(ROCmMutex);
+                initROCmStatus.store(InitROCmStatusEnum::Failed, std::memory_order_release);
+                setLastError(fullMessage + " ROCm backend disabled until release()/init().");
+            }
+        }
+
+        static void clearCallFailures()
+        {
+            consecutiveROCmFailures.store(0, std::memory_order_release);
+        }
+
         static std::string compileROCmWithHIPRTC(const std::string& libraryName, const std::string& rocmSource)
         {
             // dynamic load HIPRTC lib
@@ -509,7 +582,7 @@ namespace whyb {
             auto hiprtcLib = dlManager->loadLibrary(libraryName);
             if (!hiprtcLib)
             {
-                std::cerr << "Failed to load HIPRTC library: " << libraryName << std::endl;
+                setLastError("Failed to load HIPRTC library: " + libraryName + ".");
                 return "";
             }
 
@@ -528,7 +601,7 @@ namespace whyb {
                 !hiprtcGetCode_fun || !hiprtcDestroyProgram_fun || !hiprtcGetProgramLogSize_fun ||
                 !hiprtcGetProgramLog_fun || !hiprtcGetErrorString_fun)
             {
-                std::cerr << "Failed to load HIPRTC functions from: " << libraryName << std::endl;
+                setLastError("Failed to load HIPRTC functions from: " + libraryName + ".");
                 dlManager->unloadLibrary(libraryName);
                 return "";
             }
@@ -541,7 +614,7 @@ namespace whyb {
             hiprtcResult res = hiprtcCreateProgram_fun(&prog, rocmSource.c_str(), "FastChwHwcConverterROCm.cu", 0, headers, includeNames);
             if (res != HIPRTC_SUCCESS)
             {
-                std::cerr << "hiprtcCreateProgram failed: " << hiprtcGetErrorString_fun(res) << std::endl;
+                setLastError(std::string("hiprtcCreateProgram failed: ") + hiprtcGetErrorString_fun(res));
                 dlManager->unloadLibrary(libraryName);
                 return "";
             }
@@ -555,7 +628,7 @@ namespace whyb {
                 hiprtcGetProgramLogSize_fun(prog, &logSize);
                 std::string log(logSize, '\0');
                 hiprtcGetProgramLog_fun(prog, &log[0]);
-                std::cerr << "ROCm Compile error: " << log << std::endl;
+                setLastError("ROCm Compile error: " + log);
                 hiprtcDestroyProgram_fun(&prog);
                 dlManager->unloadLibrary(libraryName);
                 return "";
@@ -581,7 +654,7 @@ namespace whyb {
             char currentDir[MAX_PATH] = { 0 };
             if (GetModuleFileNameA(nullptr, currentDir, MAX_PATH) == 0)
             {
-                std::cerr << "Failed to get current directory on Windows." << std::endl;
+                setLastError("Failed to get current directory on Windows.");
                 return "";
             }
 
@@ -595,7 +668,7 @@ namespace whyb {
             char currentDir[PATH_MAX] = { 0 };
             if (readlink("/proc/self/exe", currentDir, PATH_MAX) == -1)
             {
-                std::cerr << "Failed to get current directory on Linux." << std::endl;
+                setLastError("Failed to get current directory on Linux.");
                 return "";
             }
 
@@ -639,7 +712,7 @@ namespace whyb {
             }
 #endif
 
-            std::cerr << "No suitable HIPRTC library found in the current executable directory: " << executablePath << std::endl;
+            setLastError("No suitable HIPRTC library found in the current executable directory: " + executablePath + ".");
             return "";
         }
 
@@ -669,7 +742,7 @@ namespace whyb {
             }
 
             if (!driverLib) {
-                std::cerr << "Failed to load any AMD ROCm Driver API library (tried v7, v6, v5)." << std::endl;
+                setLastError("Failed to load any AMD ROCm driver library (tried v7, v6, v5).");
                 return false;
             }
 
@@ -718,7 +791,7 @@ namespace whyb {
                 !hipEventCreate || !hipEventRecord ||
                 !hipEventSynchronize || !hipEventElapsedTime || !hipEventDestroy
                 ) {
-                std::cerr << "Failed to load one or more AMD ROCm Driver API functions." << std::endl;
+                setLastError("Failed to load one or more AMD ROCm driver functions.");
                 return false;
             }
             return true;
@@ -728,30 +801,30 @@ namespace whyb {
         {
             hipError_t hipRes = hipInit(0);
             if (hipRes != 0) {
-                std::cerr << "hipInit failed with error " << hipRes << std::endl;
+                setLastError("hipInit failed with error " + std::to_string(hipRes) + ".");
                 return false;
             }
             hipDevice_t device;
             hipRes = hipDeviceGet(&device, 0);
             if (hipRes != 0) {
-                std::cerr << "hipDeviceGet failed with error " << hipRes << std::endl;
+                setLastError("hipDeviceGet failed with error " + std::to_string(hipRes) + ".");
                 return false;
             }
             hipRes = hipCtxCreate(&context, 0, device);
             if (hipRes != 0) {
-                std::cerr << "hipCtxCreate failed with error " << hipRes << std::endl;
+                setLastError("hipCtxCreate failed with error " + std::to_string(hipRes) + ".");
                 return false;
             }
             hipRes = hipStreamCreate(&rocmstream);
             if (hipRes != 0) {
-                std::cerr << "hipStreamCreate failed with error " << hipRes << std::endl;
+                setLastError("hipStreamCreate failed with error " + std::to_string(hipRes) + ".");
                 return false;
             }
 
             // Load Code(like PTX) module to GPU memory
             hipRes = hipModuleLoadDataEx(&rocmmodule, compiledPtxStr.c_str(), 0, nullptr, nullptr);
             if (hipRes != 0) {
-                std::cerr << "hipModuleLoadDataEx failed with error " << hipRes << std::endl;
+                setLastError("hipModuleLoadDataEx failed with error " + std::to_string(hipRes) + ".");
                 hipCtxDestroy(context);
                 hipStreamDestroy(rocmstream);
                 return false;
@@ -760,7 +833,7 @@ namespace whyb {
             // Get ROCm module kernel function(rocm_hwc2chw)
             hipRes = hipModuleGetFunction(&hwc2chwROCmFun, rocmmodule, "rocm_hwc2chw");
             if (hipRes != 0) {
-                std::cerr << "hipModuleGetFunction (rocm_hwc2chw) failed with error " << hipRes << std::endl;
+                setLastError("hipModuleGetFunction (rocm_hwc2chw) failed with error " + std::to_string(hipRes) + ".");
                 hipModuleUnload(rocmmodule);
                 hipCtxDestroy(context);
                 hipStreamDestroy(rocmstream);
@@ -769,7 +842,7 @@ namespace whyb {
             // Get ROCm module kernel function(rocm_chw2hwc)
             hipRes = hipModuleGetFunction(&chw2hwcROCmFun, rocmmodule, "rocm_chw2hwc");
             if (hipRes != 0) {
-                std::cerr << "hipModuleGetFunction (rocm_chw2hwc) failed with error " << hipRes << std::endl;
+                setLastError("hipModuleGetFunction (rocm_chw2hwc) failed with error " + std::to_string(hipRes) + ".");
                 hipModuleUnload(rocmmodule);
                 hipCtxDestroy(context);
                 hipStreamDestroy(rocmstream);
@@ -781,43 +854,44 @@ namespace whyb {
         static bool initAll()
         {
             std::lock_guard<std::mutex> lock(ROCmMutex);
-            if (initROCmStatus == InitROCmStatusEnum::Ready) {
+            setLastError("");
+            if (initROCmStatus.load(std::memory_order_acquire) == InitROCmStatusEnum::Ready) {
                 std::string hiprtc_module_filename = findHIPRTCModuleName();
                 if (hiprtc_module_filename.empty()) {
-                    std::cerr << "Could not found AMD ROCm HIPRTC dll failed." << std::endl;
+                    setLastError("Could not find a suitable AMD ROCm HIPRTC library.");
                     lastROCmErrorStr = "Could not found AMD ROCm HIPRTC dll failed.";
-                    initROCmStatus = InitROCmStatusEnum::Failed;
+                    initROCmStatus.store(InitROCmStatusEnum::Failed, std::memory_order_release);
                     return false;
                 }
                 std::string code_str = compileROCmWithHIPRTC(hiprtc_module_filename, rocmSource);
                 if (code_str.empty()) {
-                    std::cerr << "Compile ROCm Source code failed." << std::endl;
+                    setLastError("Compile ROCm source code failed.");
                     lastROCmErrorStr = "Compile ROCm Source code failed.";
-                    initROCmStatus = InitROCmStatusEnum::Failed;
+                    initROCmStatus.store(InitROCmStatusEnum::Failed, std::memory_order_release);
                     return false;
                 }
                 bool init_rocm_driver = initROCmDriverAPI();
                 if (!init_rocm_driver) {
-                    std::cerr << "Failed to load ROCm Driver API functions." << std::endl;
+                    setLastError("Failed to initialize the ROCm driver functions.");
                     lastROCmErrorStr = "Failed to load ROCm Driver API functions.";
-                    initROCmStatus = InitROCmStatusEnum::Failed;
+                    initROCmStatus.store(InitROCmStatusEnum::Failed, std::memory_order_release);
                     return false;
                 }
                 bool init_rocm_functions = initROCmFunctions(code_str);
                 if (!init_rocm_functions) {
-                    std::cerr << "Failed to load ROCm Driver API functions." << std::endl;
+                    setLastError("Failed to initialize the ROCm driver functions.");
                     lastROCmErrorStr = "Failed to load ROCm Driver API functions.";
-                    initROCmStatus = InitROCmStatusEnum::Failed;
+                    initROCmStatus.store(InitROCmStatusEnum::Failed, std::memory_order_release);
                     return false;
                 }
-                initROCmStatus = InitROCmStatusEnum::Inited;
+                initROCmStatus.store(InitROCmStatusEnum::Inited, std::memory_order_release);
                 return true;
             }
-            else if (initROCmStatus == InitROCmStatusEnum::Inited) {
+            else if (initROCmStatus.load(std::memory_order_acquire) == InitROCmStatusEnum::Inited) {
                 return true;
             }
-            else if (initROCmStatus == InitROCmStatusEnum::Failed) {
-                std::cerr << "Init Failed. Last error: " << lastROCmErrorStr << std::endl;
+            else if (initROCmStatus.load(std::memory_order_acquire) == InitROCmStatusEnum::Failed) {
+                setLastError("ROCm initialization failed. " + lastError());
                 return false;
             }
             return true;
@@ -825,19 +899,25 @@ namespace whyb {
 
         static bool releaseAll()
         {
+            std::lock_guard<std::mutex> lock(ROCmMutex);
+            if (initROCmStatus.load(std::memory_order_acquire) != InitROCmStatusEnum::Inited)
+            {
+                return true;
+            }
+
             hipError_t hipRes = hipModuleUnload(rocmmodule);
             if (hipRes != 0) {
-                std::cerr << "hipModuleUnload failed with error " << hipRes << std::endl;
+                setLastError("hipModuleUnload failed with error " + std::to_string(hipRes) + ".");
                 return false;
             }
             hipRes = hipStreamDestroy(rocmstream);
             if (hipRes != 0) {
-                std::cerr << "hipStreamDestroy failed with error " << hipRes << std::endl;
+                setLastError("hipStreamDestroy failed with error " + std::to_string(hipRes) + ".");
                 return false;
             }
             hipRes = hipCtxDestroy(context);
             if (hipRes != 0) {
-                std::cerr << "hipCtxDestroy failed with error " << hipRes << std::endl;
+                setLastError("hipCtxDestroy failed with error " + std::to_string(hipRes) + ".");
                 return false;
             }
             auto* dlManager = whyb::DynamicLibraryManager::instance();
@@ -847,13 +927,18 @@ namespace whyb {
             const std::string driver_dll = "amdhip64_6.so";
 #endif
             dlManager->unloadLibrary(driver_dll);
+            consecutiveROCmFailures.store(0, std::memory_order_release);
+            initROCmStatus.store(InitROCmStatusEnum::Ready, std::memory_order_release);
             return true;
         }
 
     private:
-        inline static InitROCmStatusEnum initROCmStatus = InitROCmStatusEnum::Ready;
+        inline static std::atomic<InitROCmStatusEnum> initROCmStatus = InitROCmStatusEnum::Ready;
         inline static std::string lastROCmErrorStr = "";
         inline static std::mutex ROCmMutex;
+        inline static std::mutex errorMutex;
+        inline static std::atomic<size_t> consecutiveROCmFailures = 0;
+        static constexpr size_t maxConsecutiveROCmFailures = 3;
 
         inline static hipFunction_t hwc2chwROCmFun = nullptr;
         inline static hipFunction_t chw2hwcROCmFun = nullptr;

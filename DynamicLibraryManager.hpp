@@ -1,4 +1,4 @@
-﻿/*
+/*
  * This file is part of [https://github.com/whyb/FastChwHwcConverter].
  * Copyright (C) [2025-2026] [張小凡](https://github.com/whyb)
  *
@@ -20,8 +20,8 @@
 #pragma once
 
 #include <map>
+#include <mutex>
 #include <string>
-#include <iostream>
 
 #ifdef _WIN32
 #define NOMINMAX
@@ -57,6 +57,7 @@ public:
 
     ~DynamicLibraryManager()
     {
+        std::lock_guard<std::mutex> lock(librariesMutex_);
         for (std::map<std::string, LibraryHandle>::iterator it = libraries_.begin(); it != libraries_.end(); ++it)
         {
             if (it->second)
@@ -70,29 +71,65 @@ public:
         }
     }
 
-    LibraryHandle loadLibrary(std::string libraryName)
+    // Returns the most recent load/symbol error.  The library does not write
+    // diagnostics directly to std::cerr, so callers can present them as needed.
+    std::string getLastError() const
     {
-        if (libraries_.count(libraryName) == 0)
+        std::lock_guard<std::mutex> lock(errorMutex_);
+        return lastError_;
+    }
+
+    void clearError()
+    {
+        std::lock_guard<std::mutex> lock(errorMutex_);
+        lastError_.clear();
+    }
+
+    LibraryHandle loadLibrary(const std::string& libraryName)
+    {
         {
-#ifdef _WIN32
-            LibraryHandle handle = LoadLibraryEx(libraryName.c_str(), nullptr,
-                LOAD_LIBRARY_SEARCH_DEFAULT_DIRS|LOAD_LIBRARY_SEARCH_SYSTEM32);
-            if (!handle) {
-                auto lastError = GetLastError();
-                std::cerr << "loadLibrary failed, Code: " << lastError << "." << std::endl;
-                return nullptr;
+            std::lock_guard<std::mutex> lock(librariesMutex_);
+            auto existing = libraries_.find(libraryName);
+            if (existing != libraries_.end())
+            {
+                return existing->second;
             }
-#else
-            LibraryHandle handle = dlopen(libraryName.c_str(), RTLD_LAZY);
-            if (!handle) {
-                std::cerr << "loadLibrary failed." << std::endl;
-                return nullptr;
-            }
-#endif
-            libraries_[libraryName] = handle;
-            return handle;
         }
-        return libraries_[libraryName];
+
+#ifdef _WIN32
+        LibraryHandle handle = LoadLibraryEx(libraryName.c_str(), nullptr,
+            LOAD_LIBRARY_SEARCH_DEFAULT_DIRS|LOAD_LIBRARY_SEARCH_SYSTEM32);
+        if (!handle) {
+            setLastError("loadLibrary failed for '" + libraryName + "', system code: " +
+                         std::to_string(GetLastError()) + ".");
+            return nullptr;
+        }
+#else
+        LibraryHandle handle = dlopen(libraryName.c_str(), RTLD_LAZY);
+        if (!handle) {
+            const char* reason = dlerror();
+            setLastError(std::string("loadLibrary failed for '") + libraryName + "'" +
+                         (reason ? std::string(": ") + reason : std::string(".")));
+            return nullptr;
+        }
+#endif
+        {
+            std::lock_guard<std::mutex> lock(librariesMutex_);
+            auto existing = libraries_.find(libraryName);
+            if (existing != libraries_.end())
+            {
+                if (handle) {
+#ifdef _WIN32
+                    FreeLibrary(handle);
+#else
+                    dlclose(handle);
+#endif
+                }
+                return existing->second;
+            }
+            libraries_[libraryName] = handle;
+        }
+        return handle;
     }
 
     void* getFunction(const std::string& libraryName, const std::string& functionName)
@@ -104,28 +141,52 @@ public:
         }
 
 #ifdef _WIN32
-        return GetProcAddress(static_cast<HMODULE>(libHandle), functionName.c_str());
+        void* function = reinterpret_cast<void*>(GetProcAddress(static_cast<HMODULE>(libHandle), functionName.c_str()));
 #else
-        return dlsym(libHandle, functionName.c_str());
+        void* function = dlsym(libHandle, functionName.c_str());
 #endif
+        if (!function)
+        {
+            setLastError("Failed to resolve symbol '" + functionName + "' in '" + libraryName + "'.");
+        }
+        return function;
     }
 
     void unloadLibrary(const std::string& libraryName)
     {
-        typename std::map<std::string, LibraryHandle>::iterator it = libraries_.find(libraryName);
-        if (it != libraries_.end())
+        LibraryHandle handle = nullptr;
+        {
+            std::lock_guard<std::mutex> lock(librariesMutex_);
+            auto it = libraries_.find(libraryName);
+            if (it == libraries_.end())
+            {
+                return;
+            }
+            handle = it->second;
+            libraries_.erase(it);
+        }
+
+        if (handle)
         {
 #ifdef _WIN32
-            FreeLibrary(it->second);
+            FreeLibrary(handle);
 #else
-            dlclose(it->second);
+            dlclose(handle);
 #endif
-            libraries_.erase(it);
         }
     }
 
 private:
+    void setLastError(const std::string& message) const
+    {
+        std::lock_guard<std::mutex> lock(errorMutex_);
+        lastError_ = message;
+    }
+
     std::map<std::string, LibraryHandle> libraries_;
+    mutable std::mutex librariesMutex_;
+    mutable std::mutex errorMutex_;
+    mutable std::string lastError_;
 };
 
 }

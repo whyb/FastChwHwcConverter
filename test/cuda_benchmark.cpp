@@ -6,6 +6,8 @@
 #include "FastChwHwcConverterCuda.hpp"
 #include "benchmark_util.hpp"
 
+using namespace whyb;
+
 #define TEST_COUNT 10000
 #define WARMUP_COUNT 1000
 #define REPEAT_COUNT 3
@@ -38,10 +40,10 @@ int main() {
             const std::vector<float> host_src_f32 = whyb_test::random_f32(pixel_size, 0.0f, 1.0f);
 
             // Device buffers
-            CUdeviceptr src_uint8 = 0;   // HWC uint8 input  -> CHW float (hwc2chw dst)
-            CUdeviceptr src_float = 0;   // CHW float input  -> HWC uint8 (chw2hwc dst)
-            CUdeviceptr out_float = 0;
-            CUdeviceptr out_uint8 = 0;
+            whyb::CUdeviceptr src_uint8 = 0;   // HWC uint8 input  -> CHW float (hwc2chw dst)
+            whyb::CUdeviceptr src_float = 0;   // CHW float input  -> HWC uint8 (chw2hwc dst)
+            whyb::CUdeviceptr out_float = 0;
+            whyb::CUdeviceptr out_uint8 = 0;
             cuMemAlloc(&src_uint8, pixel_size * sizeof(uint8_t));
             cuMemAlloc(&src_float, pixel_size * sizeof(float));
             cuMemAlloc(&out_float, pixel_size * sizeof(float));
