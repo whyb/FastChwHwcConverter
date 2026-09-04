@@ -309,34 +309,42 @@ typedef uint64_t VkFence;
 typedef uint64_t VkDeviceSize;
 
 #ifndef VK_NULL_HANDLE
-#define VK_NULL_HANDLE 0ULL
+#define VK_NULL_HANDLE 0ULL
+
 #endif
 #ifndef VK_WHOLE_SIZE
-#define VK_WHOLE_SIZE (~0ULL)
+#define VK_WHOLE_SIZE (~0ULL)
+
 #endif
 #ifndef VK_MAX_PHYSICAL_DEVICE_NAME_SIZE
-#define VK_MAX_PHYSICAL_DEVICE_NAME_SIZE 256U
+#define VK_MAX_PHYSICAL_DEVICE_NAME_SIZE 256U
+
 #endif
 #ifndef VK_UUID_SIZE
-#define VK_UUID_SIZE 16U
+#define VK_UUID_SIZE 16U
+
 #endif
 #ifndef VK_MAX_MEMORY_TYPES
-#define VK_MAX_MEMORY_TYPES 32U
+#define VK_MAX_MEMORY_TYPES 32U
+
 #endif
 #ifndef VK_MAX_MEMORY_HEAPS
-#define VK_MAX_MEMORY_HEAPS 16U
+#define VK_MAX_MEMORY_HEAPS 16U
+
 #endif
 
 #ifndef VK_MAKE_VERSION
 #define VK_MAKE_VERSION(major, minor, patch) ((((uint32_t)(major)) << 22) | (((uint32_t)(minor)) << 12) | ((uint32_t)(patch)))
 #endif
 #ifndef VK_API_VERSION_1_0
-#define VK_API_VERSION_1_0 VK_MAKE_VERSION(1, 0, 0)
+#define VK_API_VERSION_1_0 VK_MAKE_VERSION(1, 0, 0)
+
 #endif
 
 typedef int32_t VkResult;
 #ifndef VK_SUCCESS
-#define VK_SUCCESS 0
+#define VK_SUCCESS 0
+
 #endif
 
 typedef enum {
