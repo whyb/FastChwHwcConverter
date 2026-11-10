@@ -18,6 +18,7 @@ option(BUILD_ROCM_BENCHMARK "Build AMD ROCm benchmark target" ON)
 option(BUILD_EXAMPLE_OPENCV "Build example-opencv target" OFF)
 option(USE_TBB "Use Intel oneTBB for parallel programming" OFF)
 option(BUILD_VULKAN_BENCHMARK "Build Vulkan benchmark target" ON)
+option(BUILD_OPENCL_BENCHMARK "Build OpenCL benchmark target" ON)
 option(BUILD_VALIDATE "Build correctness validation target" ON)
 
 # Check for OpenMP support if the option is enabled
@@ -97,10 +98,23 @@ if(BUILD_VULKAN_BENCHMARK AND Vulkan_FOUND)
     target_compile_options(vulkan_benchmark PRIVATE ${OpenMP_FLAGS})
     target_link_libraries(vulkan_benchmark PRIVATE ${TBB_LIBS})
 endif()
+
+# The OpenCL backend requires no OpenCL SDK, header files, or static linking at
+# build time: FastChwHwcConverterOpenCL.hpp declares its own minimal OpenCL ABI
+# types and dynamically loads the system OpenCL ICD loader (OpenCL.dll /
+# libOpenCL.so.1 / OpenCL.framework) at runtime. The BUILD_OPENCL_BENCHMARK
+# switch therefore only controls whether the OpenCL benchmark target is
+# generated, nothing else.
+if(BUILD_OPENCL_BENCHMARK)
+    add_executable(opencl_benchmark DynamicLibraryManager.hpp FastChwHwcConverterOpenCL.hpp test/opencl_benchmark.cpp)
+    target_include_directories(opencl_benchmark PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${TBB_INCLUDE_DIRS})
+    target_compile_options(opencl_benchmark PRIVATE ${OpenMP_FLAGS})
+    target_link_libraries(opencl_benchmark PRIVATE ${TBB_LIBS})
+endif()
 if(BUILD_VALIDATE)
     add_executable(validate
         DynamicLibraryManager.hpp
-        FastChwHwcConverter.hpp FastChwHwcConverterCuda.hpp FastChwHwcConverterROCm.hpp FastChwHwcConverterVulkan.hpp
+        FastChwHwcConverter.hpp FastChwHwcConverterCuda.hpp FastChwHwcConverterOpenCL.hpp FastChwHwcConverterROCm.hpp FastChwHwcConverterVulkan.hpp
         test/benchmark_util.hpp test/validate.cpp)
     target_include_directories(validate PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${TBB_INCLUDE_DIRS})
     target_compile_options(validate PRIVATE ${OpenMP_FLAGS})

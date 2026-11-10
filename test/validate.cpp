@@ -8,6 +8,7 @@
 
 #include "FastChwHwcConverter.hpp"
 #include "FastChwHwcConverterCuda.hpp"
+#include "FastChwHwcConverterOpenCL.hpp"
 #include "FastChwHwcConverterROCm.hpp"
 #include "FastChwHwcConverterVulkan.hpp"
 
@@ -268,6 +269,15 @@ void validate_gpus() {
                            [](size_t c, size_t h, size_t w, const float* s, uint8_t* d, uint8_t a) {
                                whyb::vulkan::chw2hwc(c, h, w, s, d, a);
                            } });
+
+    validate_gpu_backend({ "opencl",
+                           &whyb::opencl::init, &whyb::opencl::release,
+                           [](size_t h, size_t w, size_t c, const uint8_t* s, float* d, float a) {
+                               whyb::opencl::hwc2chw(h, w, c, s, d, a);
+                           },
+                           [](size_t c, size_t h, size_t w, const float* s, uint8_t* d, uint8_t a) {
+                               whyb::opencl::chw2hwc(c, h, w, s, d, a);
+                           } });
 }
 
 } // namespace
@@ -276,7 +286,7 @@ int main() {
     std::cout << "validate: CPU vs naive reference ..." << std::endl;
     validate_cpu();
 
-    std::cout << "validate: GPU (CUDA / ROCm / Vulkan) vs CPU ..." << std::endl;
+    std::cout << "validate: GPU (CUDA / ROCm / Vulkan / OpenCL) vs CPU ..." << std::endl;
     validate_gpus();
 
     if (g_errors != 0) {
