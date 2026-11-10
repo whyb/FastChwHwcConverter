@@ -344,41 +344,81 @@ inline clFinish_t clFinish = nullptr;
 // OpenCL C kernel sources (compiled to device binaries at runtime with
 // clBuildProgram).
 //
-// opencl_hwc2chw: HWC (uint8) -> CHW (float). Every work item owns exactly
-// one pixel and converts its channels.
-//
-// opencl_chw2hwc: CHW (float) -> HWC (uint8). The float->uint8 narrow is
-// clamped first (like the CUDA kernel and the CPU fallback), so the GPU and
-// CPU results stay identical.
+// The kernels mirror the CPU implementation exactly:
+//   value = has_alpha ? src * alpha : src
+//   value = need_norm ? (value - mean[min(ch,2)]) / stds[min(ch,2)] : value
+//   value = need_clamp ? clamp(value, min_v, max_v) : value
+//   dst = (Dtype)value
+// src_is_float / dst_is_float select the uint8_t or float element type of the
+// buffers, so all uint8_t/float source/destination combinations are covered.
 // ---------------------------------------------------------------------------
 static const char* openclSource = R"(
   // HWC -> CHW
   __kernel void opencl_hwc2chw(const ulong h, const ulong w, const ulong c,
-                               const __global uchar* src, __global float* dst, const float alpha) {
+                               __global const uchar* src, __global uchar* dst,
+                               const int src_is_float, const int dst_is_float,
+                               const int has_alpha, const int need_clamp, const int need_norm,
+                               const float alpha, const float min_v, const float max_v,
+                               const float mean0, const float mean1, const float mean2,
+                               const float std0, const float std1, const float std2) {
       const size_t dx = get_global_id(0);
       const size_t dy = get_global_id(1);
 
       if (dx < w && dy < h) {
           const size_t pixel = dy * w + dx;
+          const size_t hw = w * h;
           const size_t src_base = pixel * c;
           for (size_t ch = 0; ch < c; ++ch) {
-              dst[pixel + ch * w * h] = (float)(src[src_base + ch] * alpha);
+              float value = src_is_float ? ((__global const float*)src)[src_base + ch] : (float)src[src_base + ch];
+              if (has_alpha) {
+                  value *= alpha;
+              }
+              if (need_norm) {
+                  const float mean_v = (ch < 2) ? ((ch == 0) ? mean0 : mean1) : mean2;
+                  const float std_v = (ch < 2) ? ((ch == 0) ? std0 : std1) : std2;
+                  value = (value - mean_v) / std_v;
+              }
+              if (need_clamp) {
+                  value = (value < min_v) ? min_v : ((max_v < value) ? max_v : value);
+              }
+              const size_t dst_index = pixel + ch * hw;
+              if (dst_is_float) {
+                  ((__global float*)dst)[dst_index] = value;
+              }
+              else {
+                  dst[dst_index] = (uchar)value;
+              }
           }
       }
   }
 
    // CHW -> HWC
    __kernel void opencl_chw2hwc(const ulong c, const ulong h, const ulong w,
-                                const __global float* src, __global uchar* dst, const float alpha) {
+                                __global const uchar* src, __global uchar* dst,
+                                const int src_is_float, const int dst_is_float,
+                                const int has_alpha, const int need_clamp,
+                                const float alpha, const float min_v, const float max_v) {
        const size_t dx = get_global_id(0);
        const size_t dy = get_global_id(1);
 
        if (dx < w && dy < h) {
            const size_t pixel = dy * w + dx;
+           const size_t hw = w * h;
            const size_t dst_base = pixel * c;
            for (size_t ch = 0; ch < c; ++ch) {
-               float value = src[pixel + ch * w * h] * alpha;
-               dst[dst_base + ch] = (uchar)(value < 0.0f ? 0.0f : (value > 255.0f ? 255.0f : value));
+               float value = src_is_float ? ((__global const float*)src)[pixel + ch * hw] : (float)src[pixel + ch * hw];
+               if (has_alpha) {
+                   value *= alpha;
+               }
+               if (need_clamp) {
+                   value = (value < min_v) ? min_v : ((max_v < value) ? max_v : value);
+               }
+               if (dst_is_float) {
+                   ((__global float*)dst)[dst_base + ch] = value;
+               }
+               else {
+                   dst[dst_base + ch] = (uchar)value;
+               }
            }
        }
    }
@@ -421,290 +461,301 @@ enum struct InitOpenCLStatusEnum : int
         /**
         * @brief Converts image data from HWC format to CHW format
         *
+        * @tparam Stype Source data type
+        * @tparam Dtype Destination data type
+        * @tparam HasAlpha input alpha is requires participation in calculations
+        * @tparam NeedClamp input min_v and max_v are requires participation in calculations
+        * @tparam NeedNormalizedMeanStds input mean and stds are requires participation in calculations
         * @param h Height of image
         * @param w Width of image
         * @param c Number of channels
         * @param src Pointer to the source data in HWC format
         * @param dst Pointer to the destination data in CHW format
         * @param alpha Scaling factor
+        * @param min_v Minimum value for clamping
+        * @param max_v Maximum value for clamping
+        * @param mean Array of mean values for normalization
+        * @param stds Array of standard deviation values for normalization
+        *
+        * Normalization parameters are RGB-only.  A fourth channel reuses the
+        * final parameter set to avoid reading outside the arrays.
         */
+        template <typename Stype, typename Dtype,
+                  bool HasAlpha = false,
+                  bool NeedClamp = false,
+                  bool NeedNormalizedMeanStds = false>
         static void hwc2chw(
             const size_t h, const size_t w, const size_t c,
-            const uint8_t* src, float* dst,
-            const float alpha = 1.f / 255.f) {
+            const Stype* src, Dtype* dst,
+            const Dtype alpha = 1,
+            const Dtype min_v = 0.0, const Dtype max_v = 1.0,
+            const std::array<float, 3> mean = { 0.485f, 0.456f, 0.406f },
+            const std::array<float, 3> stds = { 0.229f, 0.224f, 0.225f }) {
             opencl();
             if (h == 0 || w == 0 || c == 0 || src == nullptr || dst == nullptr) {
                 return;
             }
-            if (initOpenCLStatus.load(std::memory_order_acquire) != InitOpenCLStatusEnum::Inited) {
-                // use cpu
-                cpu::hwc2chw<uint8_t, float, true>(h, w, c, src, dst, alpha); return;
+            if constexpr (!isSupportedElementType<Stype, Dtype>()) {
+                // use cpu (the GPU kernels cover uint8_t and float element types)
+                cpu::hwc2chw<Stype, Dtype, HasAlpha, NeedClamp, NeedNormalizedMeanStds>(h, w, c, src, dst, alpha, min_v, max_v, mean, stds); return;
             }
-            std::lock_guard<std::mutex> lock(OpenCLMutex);
-            // use opencl
-            const size_t pixel_size = h * w * c;
-            const size_t input_size = pixel_size * sizeof(uint8_t);
-            const size_t output_size = pixel_size * sizeof(float);
-            cl_mem opencl_input_memory = nullptr;
-            cl_mem opencl_output_memory = nullptr;
-            // alloc device memory
-            cl_int clRes0 = CL_SUCCESS;
-            opencl_input_memory = clCreateBuffer(context, CL_MEM_READ_ONLY, input_size, nullptr, &clRes0);
-            cl_int clRes1 = CL_SUCCESS;
-            opencl_output_memory = clCreateBuffer(context, CL_MEM_WRITE_ONLY, output_size, nullptr, &clRes1);
-            if (clRes0 != CL_SUCCESS || clRes1 != CL_SUCCESS) {
-                if (opencl_input_memory != nullptr) { clReleaseMemObject(opencl_input_memory); }
-                if (opencl_output_memory != nullptr) { clReleaseMemObject(opencl_output_memory); }
-                fallbackToCpuHwc2chw(h, w, c, src, dst, alpha, "OpenCL hwc2chw GPU execution failed"); return;
-            }
-            // copy host memory to device memory
-            cl_int clRes2 = clEnqueueWriteBuffer(openclqueue, opencl_input_memory, CL_TRUE, 0, input_size, src, 0, nullptr, nullptr);
-            if (clRes2 != CL_SUCCESS) {
+            else {
+                if (initOpenCLStatus.load(std::memory_order_acquire) != InitOpenCLStatusEnum::Inited) {
+                    // use cpu
+                    cpu::hwc2chw<Stype, Dtype, HasAlpha, NeedClamp, NeedNormalizedMeanStds>(h, w, c, src, dst, alpha, min_v, max_v, mean, stds); return;
+                }
+                std::lock_guard<std::mutex> lock(OpenCLMutex);
+                // use opencl
+                const size_t pixel_size = h * w * c;
+                const size_t input_size = pixel_size * sizeof(Stype);
+                const size_t output_size = pixel_size * sizeof(Dtype);
+                cl_mem opencl_input_memory = nullptr;
+                cl_mem opencl_output_memory = nullptr;
+                // alloc device memory
+                cl_int clRes0 = CL_SUCCESS;
+                opencl_input_memory = clCreateBuffer(context, CL_MEM_READ_ONLY, input_size, nullptr, &clRes0);
+                cl_int clRes1 = CL_SUCCESS;
+                opencl_output_memory = clCreateBuffer(context, CL_MEM_WRITE_ONLY, output_size, nullptr, &clRes1);
+                if (clRes0 != CL_SUCCESS || clRes1 != CL_SUCCESS) {
+                    if (opencl_input_memory != nullptr) { clReleaseMemObject(opencl_input_memory); }
+                    if (opencl_output_memory != nullptr) { clReleaseMemObject(opencl_output_memory); }
+                    fallbackToCpuHwc2chw<Stype, Dtype, HasAlpha, NeedClamp, NeedNormalizedMeanStds>(h, w, c, src, dst, alpha, min_v, max_v, mean, stds, "OpenCL hwc2chw GPU execution failed"); return;
+                }
+                // copy host memory to device memory
+                cl_int clRes2 = clEnqueueWriteBuffer(openclqueue, opencl_input_memory, CL_TRUE, 0, input_size, src, 0, nullptr, nullptr);
+                if (clRes2 != CL_SUCCESS) {
+                    clReleaseMemObject(opencl_input_memory);
+                    clReleaseMemObject(opencl_output_memory);
+                    fallbackToCpuHwc2chw<Stype, Dtype, HasAlpha, NeedClamp, NeedNormalizedMeanStds>(h, w, c, src, dst, alpha, min_v, max_v, mean, stds, "OpenCL hwc2chw GPU execution failed"); return;
+                }
+                // call opencl function
+                const bool launch_ok = runHwc2chwKernel(h, w, c, opencl_input_memory, opencl_output_memory,
+                    isFloatElementType<Stype>(), isFloatElementType<Dtype>(),
+                    HasAlpha, NeedClamp, NeedNormalizedMeanStds,
+                    (float)alpha, (float)min_v, (float)max_v, mean, stds);
+                if (!launch_ok) {
+                    clReleaseMemObject(opencl_input_memory);
+                    clReleaseMemObject(opencl_output_memory);
+                    fallbackToCpuHwc2chw<Stype, Dtype, HasAlpha, NeedClamp, NeedNormalizedMeanStds>(h, w, c, src, dst, alpha, min_v, max_v, mean, stds, "OpenCL hwc2chw GPU execution failed"); return;
+                }
+                // copy device memory to host memory; the blocking read also
+                // guarantees the kernel has finished before the function returns
+                cl_int clRes4 = clEnqueueReadBuffer(openclqueue, opencl_output_memory, CL_TRUE, 0, output_size, dst, 0, nullptr, nullptr);
+                if (clRes4 != CL_SUCCESS) {
+                    clReleaseMemObject(opencl_input_memory);
+                    clReleaseMemObject(opencl_output_memory);
+                    fallbackToCpuHwc2chw<Stype, Dtype, HasAlpha, NeedClamp, NeedNormalizedMeanStds>(h, w, c, src, dst, alpha, min_v, max_v, mean, stds, "OpenCL hwc2chw GPU execution failed"); return;
+                }
                 clReleaseMemObject(opencl_input_memory);
                 clReleaseMemObject(opencl_output_memory);
-                fallbackToCpuHwc2chw(h, w, c, src, dst, alpha, "OpenCL hwc2chw GPU execution failed"); return;
+                clearCallFailures();
+                return;
             }
-            // call opencl function
-            if (hwc2chwOpenCLFun == nullptr) {
-                clReleaseMemObject(opencl_input_memory);
-                clReleaseMemObject(opencl_output_memory);
-                fallbackToCpuHwc2chw(h, w, c, src, dst, alpha, "OpenCL hwc2chw GPU execution failed"); return;
-            }
-            const size_t global_size[2] = { w, h };
-            // for ready opencl kernel function(opencl_hwc2chw)
-            cl_ulong arg_h_val = (cl_ulong)h;
-            cl_ulong arg_w_val = (cl_ulong)w;
-            cl_ulong arg_c_val = (cl_ulong)c;
-            cl_mem arg_src_val = opencl_input_memory;
-            cl_mem arg_dst_val = opencl_output_memory;
-            cl_float arg_alpha_val = alpha;
-            cl_int clRes3 = clSetKernelArg(hwc2chwOpenCLFun, 0, sizeof(cl_ulong), &arg_h_val);
-            if (clRes3 == CL_SUCCESS) { clRes3 = clSetKernelArg(hwc2chwOpenCLFun, 1, sizeof(cl_ulong), &arg_w_val); }
-            if (clRes3 == CL_SUCCESS) { clRes3 = clSetKernelArg(hwc2chwOpenCLFun, 2, sizeof(cl_ulong), &arg_c_val); }
-            if (clRes3 == CL_SUCCESS) { clRes3 = clSetKernelArg(hwc2chwOpenCLFun, 3, sizeof(cl_mem), &arg_src_val); }
-            if (clRes3 == CL_SUCCESS) { clRes3 = clSetKernelArg(hwc2chwOpenCLFun, 4, sizeof(cl_mem), &arg_dst_val); }
-            if (clRes3 == CL_SUCCESS) { clRes3 = clSetKernelArg(hwc2chwOpenCLFun, 5, sizeof(cl_float), &arg_alpha_val); }
-            if (clRes3 != CL_SUCCESS) {
-                clReleaseMemObject(opencl_input_memory);
-                clReleaseMemObject(opencl_output_memory);
-                fallbackToCpuHwc2chw(h, w, c, src, dst, alpha, "OpenCL hwc2chw GPU execution failed"); return;
-            }
-            cl_int clRes4 = clEnqueueNDRangeKernel(openclqueue, hwc2chwOpenCLFun, 2, nullptr, global_size, nullptr, 0, nullptr, nullptr);
-            if (clRes4 != CL_SUCCESS) {
-                clReleaseMemObject(opencl_input_memory);
-                clReleaseMemObject(opencl_output_memory);
-                fallbackToCpuHwc2chw(h, w, c, src, dst, alpha, "OpenCL hwc2chw GPU execution failed"); return;
-            }
-            // copy device memory to host memory; the blocking read also
-            // guarantees the kernel has finished before the function returns
-            cl_int clRes5 = clEnqueueReadBuffer(openclqueue, opencl_output_memory, CL_TRUE, 0, output_size, dst, 0, nullptr, nullptr);
-            if (clRes5 != CL_SUCCESS) {
-                clReleaseMemObject(opencl_input_memory);
-                clReleaseMemObject(opencl_output_memory);
-                fallbackToCpuHwc2chw(h, w, c, src, dst, alpha, "OpenCL hwc2chw GPU execution failed"); return;
-            }
-            clReleaseMemObject(opencl_input_memory);
-            clReleaseMemObject(opencl_output_memory);
-            clearCallFailures();
-            return;
         }
 
         /**
         * @brief Converts image data from CHW format to HWC format
         *
+        * @tparam Stype Source data type
+        * @tparam Dtype Destination data type
+        * @tparam HasAlpha input alpha is requires participation in calculations
+        * @tparam NeedClamp input min_v and max_v are requires participation in calculations
         * @param c Number of channels
         * @param h Height of image
         * @param w Width of image
         * @param src Pointer to the source data in CHW format
         * @param dst Pointer to the destination data in HWC format
         * @param alpha Scaling factor
+        * @param min_v Minimum value for clamping
+        * @param max_v Maximum value for clamping
         */
+        template <typename Stype, typename Dtype,
+                  bool HasAlpha = false,
+                  bool NeedClamp = false>
         static void chw2hwc(
             const size_t c, const size_t h, const size_t w,
-            const float* src, uint8_t* dst,
-            const uint8_t alpha = 255.0f) {
+            const Stype* src, Dtype* dst,
+            const Dtype alpha = 1,
+            const Dtype min_v = 0, const Dtype max_v = 255) {
             opencl();
             if (c == 0 || h == 0 || w == 0 || src == nullptr || dst == nullptr) {
                 return;
             }
-            if (initOpenCLStatus.load(std::memory_order_acquire) != InitOpenCLStatusEnum::Inited) {
-                // use cpu
-                cpu::chw2hwc<float, uint8_t, true, true>(c, h, w, src, dst, alpha); return;
+            if constexpr (!isSupportedElementType<Stype, Dtype>()) {
+                // use cpu (the GPU kernels cover uint8_t and float element types)
+                cpu::chw2hwc<Stype, Dtype, HasAlpha, NeedClamp>(c, h, w, src, dst, alpha, min_v, max_v); return;
             }
-            std::lock_guard<std::mutex> lock(OpenCLMutex);
-            // use opencl
-            const size_t pixel_size = h * w * c;
-            const size_t input_size = pixel_size * sizeof(float);
-            const size_t output_size = pixel_size * sizeof(uint8_t);
-            cl_mem opencl_input_memory = nullptr;
-            cl_mem opencl_output_memory = nullptr;
-            // alloc device memory
-            cl_int clRes0 = CL_SUCCESS;
-            opencl_input_memory = clCreateBuffer(context, CL_MEM_READ_ONLY, input_size, nullptr, &clRes0);
-            cl_int clRes1 = CL_SUCCESS;
-            opencl_output_memory = clCreateBuffer(context, CL_MEM_WRITE_ONLY, output_size, nullptr, &clRes1);
-            if (clRes0 != CL_SUCCESS || clRes1 != CL_SUCCESS) {
-                if (opencl_input_memory != nullptr) { clReleaseMemObject(opencl_input_memory); }
-                if (opencl_output_memory != nullptr) { clReleaseMemObject(opencl_output_memory); }
-                fallbackToCpuChw2hwc(c, h, w, src, dst, alpha, "OpenCL chw2hwc GPU execution failed"); return;
-            }
-            // copy host memory to device memory
-            cl_int clRes2 = clEnqueueWriteBuffer(openclqueue, opencl_input_memory, CL_TRUE, 0, input_size, src, 0, nullptr, nullptr);
-            if (clRes2 != CL_SUCCESS) {
+            else {
+                if (initOpenCLStatus.load(std::memory_order_acquire) != InitOpenCLStatusEnum::Inited) {
+                    // use cpu
+                    cpu::chw2hwc<Stype, Dtype, HasAlpha, NeedClamp>(c, h, w, src, dst, alpha, min_v, max_v); return;
+                }
+                std::lock_guard<std::mutex> lock(OpenCLMutex);
+                // use opencl
+                const size_t pixel_size = h * w * c;
+                const size_t input_size = pixel_size * sizeof(Stype);
+                const size_t output_size = pixel_size * sizeof(Dtype);
+                cl_mem opencl_input_memory = nullptr;
+                cl_mem opencl_output_memory = nullptr;
+                // alloc device memory
+                cl_int clRes0 = CL_SUCCESS;
+                opencl_input_memory = clCreateBuffer(context, CL_MEM_READ_ONLY, input_size, nullptr, &clRes0);
+                cl_int clRes1 = CL_SUCCESS;
+                opencl_output_memory = clCreateBuffer(context, CL_MEM_WRITE_ONLY, output_size, nullptr, &clRes1);
+                if (clRes0 != CL_SUCCESS || clRes1 != CL_SUCCESS) {
+                    if (opencl_input_memory != nullptr) { clReleaseMemObject(opencl_input_memory); }
+                    if (opencl_output_memory != nullptr) { clReleaseMemObject(opencl_output_memory); }
+                    fallbackToCpuChw2hwc<Stype, Dtype, HasAlpha, NeedClamp>(c, h, w, src, dst, alpha, min_v, max_v, "OpenCL chw2hwc GPU execution failed"); return;
+                }
+                // copy host memory to device memory
+                cl_int clRes2 = clEnqueueWriteBuffer(openclqueue, opencl_input_memory, CL_TRUE, 0, input_size, src, 0, nullptr, nullptr);
+                if (clRes2 != CL_SUCCESS) {
+                    clReleaseMemObject(opencl_input_memory);
+                    clReleaseMemObject(opencl_output_memory);
+                    fallbackToCpuChw2hwc<Stype, Dtype, HasAlpha, NeedClamp>(c, h, w, src, dst, alpha, min_v, max_v, "OpenCL chw2hwc GPU execution failed"); return;
+                }
+                // call opencl function
+                const bool launch_ok = runChw2hwcKernel(c, h, w, opencl_input_memory, opencl_output_memory,
+                    isFloatElementType<Stype>(), isFloatElementType<Dtype>(),
+                    HasAlpha, NeedClamp,
+                    (float)alpha, (float)min_v, (float)max_v);
+                if (!launch_ok) {
+                    clReleaseMemObject(opencl_input_memory);
+                    clReleaseMemObject(opencl_output_memory);
+                    fallbackToCpuChw2hwc<Stype, Dtype, HasAlpha, NeedClamp>(c, h, w, src, dst, alpha, min_v, max_v, "OpenCL chw2hwc GPU execution failed"); return;
+                }
+                // copy device memory to host memory; the blocking read also
+                // guarantees the kernel has finished before the function returns
+                cl_int clRes4 = clEnqueueReadBuffer(openclqueue, opencl_output_memory, CL_TRUE, 0, output_size, dst, 0, nullptr, nullptr);
+                if (clRes4 != CL_SUCCESS) {
+                    clReleaseMemObject(opencl_input_memory);
+                    clReleaseMemObject(opencl_output_memory);
+                    fallbackToCpuChw2hwc<Stype, Dtype, HasAlpha, NeedClamp>(c, h, w, src, dst, alpha, min_v, max_v, "OpenCL chw2hwc GPU execution failed"); return;
+                }
                 clReleaseMemObject(opencl_input_memory);
                 clReleaseMemObject(opencl_output_memory);
-                fallbackToCpuChw2hwc(c, h, w, src, dst, alpha, "OpenCL chw2hwc GPU execution failed"); return;
+                clearCallFailures();
+                return;
             }
-            // call opencl function
-            if (chw2hwcOpenCLFun == nullptr) {
-                clReleaseMemObject(opencl_input_memory);
-                clReleaseMemObject(opencl_output_memory);
-                fallbackToCpuChw2hwc(c, h, w, src, dst, alpha, "OpenCL chw2hwc GPU execution failed"); return;
-            }
-            const size_t global_size[2] = { w, h };
-            // for ready opencl kernel function(opencl_chw2hwc)
-            cl_ulong arg_c_val = (cl_ulong)c;
-            cl_ulong arg_h_val = (cl_ulong)h;
-            cl_ulong arg_w_val = (cl_ulong)w;
-            cl_mem arg_src_val = opencl_input_memory;
-            cl_mem arg_dst_val = opencl_output_memory;
-            cl_float arg_alpha_val = (cl_float)alpha;
-            cl_int clRes3 = clSetKernelArg(chw2hwcOpenCLFun, 0, sizeof(cl_ulong), &arg_c_val);
-            if (clRes3 == CL_SUCCESS) { clRes3 = clSetKernelArg(chw2hwcOpenCLFun, 1, sizeof(cl_ulong), &arg_h_val); }
-            if (clRes3 == CL_SUCCESS) { clRes3 = clSetKernelArg(chw2hwcOpenCLFun, 2, sizeof(cl_ulong), &arg_w_val); }
-            if (clRes3 == CL_SUCCESS) { clRes3 = clSetKernelArg(chw2hwcOpenCLFun, 3, sizeof(cl_mem), &arg_src_val); }
-            if (clRes3 == CL_SUCCESS) { clRes3 = clSetKernelArg(chw2hwcOpenCLFun, 4, sizeof(cl_mem), &arg_dst_val); }
-            if (clRes3 == CL_SUCCESS) { clRes3 = clSetKernelArg(chw2hwcOpenCLFun, 5, sizeof(cl_float), &arg_alpha_val); }
-            if (clRes3 != CL_SUCCESS) {
-                clReleaseMemObject(opencl_input_memory);
-                clReleaseMemObject(opencl_output_memory);
-                fallbackToCpuChw2hwc(c, h, w, src, dst, alpha, "OpenCL chw2hwc GPU execution failed"); return;
-            }
-            cl_int clRes4 = clEnqueueNDRangeKernel(openclqueue, chw2hwcOpenCLFun, 2, nullptr, global_size, nullptr, 0, nullptr, nullptr);
-            if (clRes4 != CL_SUCCESS) {
-                clReleaseMemObject(opencl_input_memory);
-                clReleaseMemObject(opencl_output_memory);
-                fallbackToCpuChw2hwc(c, h, w, src, dst, alpha, "OpenCL chw2hwc GPU execution failed"); return;
-            }
-            // copy device memory to host memory; the blocking read also
-            // guarantees the kernel has finished before the function returns
-            cl_int clRes5 = clEnqueueReadBuffer(openclqueue, opencl_output_memory, CL_TRUE, 0, output_size, dst, 0, nullptr, nullptr);
-            if (clRes5 != CL_SUCCESS) {
-                clReleaseMemObject(opencl_input_memory);
-                clReleaseMemObject(opencl_output_memory);
-                fallbackToCpuChw2hwc(c, h, w, src, dst, alpha, "OpenCL chw2hwc GPU execution failed"); return;
-            }
-            clReleaseMemObject(opencl_input_memory);
-            clReleaseMemObject(opencl_output_memory);
-            clearCallFailures();
-            return;
         }
 
 
         /**
         * @brief Converts image data from HWC format to CHW format
         *
+        * @tparam Stype Source data type
+        * @tparam Dtype Destination data type
+        * @tparam HasAlpha input alpha is requires participation in calculations
+        * @tparam NeedClamp input min_v and max_v are requires participation in calculations
+        * @tparam NeedNormalizedMeanStds input mean and stds are requires participation in calculations
         * @param h Height of image
         * @param w Width of image
         * @param c Number of channels
         * @param src OpenCL Memory (uint8_t) Pointer to the source data in HWC format
         * @param dst OpenCL Memory (float) Pointer to the destination data in CHW format
         * @param alpha Scaling factor
+        * @param min_v Minimum value for clamping
+        * @param max_v Maximum value for clamping
+        * @param mean Array of mean values for normalization
+        * @param stds Array of standard deviation values for normalization
         */
+        template <typename Stype, typename Dtype,
+                  bool HasAlpha = false,
+                  bool NeedClamp = false,
+                  bool NeedNormalizedMeanStds = false>
         static void hwc2chw(
             const size_t h, const size_t w, const size_t c,
             const cl_mem src, const cl_mem dst,
-            const float alpha = 1.f / 255.f) {
+            const Dtype alpha = 1,
+            const Dtype min_v = 0.0, const Dtype max_v = 1.0,
+            const std::array<float, 3> mean = { 0.485f, 0.456f, 0.406f },
+            const std::array<float, 3> stds = { 0.229f, 0.224f, 0.225f }) {
             opencl();
             if (h == 0 || w == 0 || c == 0 || src == nullptr || dst == nullptr) {
                 return;
             }
-            if (initOpenCLStatus.load(std::memory_order_acquire) != InitOpenCLStatusEnum::Inited) {
-                setLastError("OpenCL device-memory hwc2chw called before successful initialization.");
+            if constexpr (!isSupportedElementType<Stype, Dtype>()) {
+                setLastError("OpenCL device-memory hwc2chw requires uint8_t/float element types.");
                 return;
             }
-            std::lock_guard<std::mutex> lock(OpenCLMutex);
-            const size_t global_size[2] = { w, h };
-            // for ready opencl kernel function(opencl_hwc2chw)
-            cl_ulong arg_h_val = (cl_ulong)h;
-            cl_ulong arg_w_val = (cl_ulong)w;
-            cl_ulong arg_c_val = (cl_ulong)c;
-            cl_float arg_alpha_val = alpha;
-            cl_int clRes0 = clSetKernelArg(hwc2chwOpenCLFun, 0, sizeof(cl_ulong), &arg_h_val);
-            if (clRes0 == CL_SUCCESS) { clRes0 = clSetKernelArg(hwc2chwOpenCLFun, 1, sizeof(cl_ulong), &arg_w_val); }
-            if (clRes0 == CL_SUCCESS) { clRes0 = clSetKernelArg(hwc2chwOpenCLFun, 2, sizeof(cl_ulong), &arg_c_val); }
-            if (clRes0 == CL_SUCCESS) { clRes0 = clSetKernelArg(hwc2chwOpenCLFun, 3, sizeof(cl_mem), &src); }
-            if (clRes0 == CL_SUCCESS) { clRes0 = clSetKernelArg(hwc2chwOpenCLFun, 4, sizeof(cl_mem), &dst); }
-            if (clRes0 == CL_SUCCESS) { clRes0 = clSetKernelArg(hwc2chwOpenCLFun, 5, sizeof(cl_float), &arg_alpha_val); }
-            if (clRes0 != CL_SUCCESS) {
-                recordCallFailure("OpenCL device-memory hwc2chw launch failed");
+            else {
+                if (initOpenCLStatus.load(std::memory_order_acquire) != InitOpenCLStatusEnum::Inited) {
+                    setLastError("OpenCL device-memory hwc2chw called before successful initialization.");
+                    return;
+                }
+                std::lock_guard<std::mutex> lock(OpenCLMutex);
+                const bool launch_ok = runHwc2chwKernel(h, w, c, src, dst,
+                    isFloatElementType<Stype>(), isFloatElementType<Dtype>(),
+                    HasAlpha, NeedClamp, NeedNormalizedMeanStds,
+                    (float)alpha, (float)min_v, (float)max_v, mean, stds);
+                if (!launch_ok) {
+                    recordCallFailure("OpenCL device-memory hwc2chw launch failed");
+                    return;
+                }
+                cl_int clRes = clFinish(openclqueue);
+                if (clRes != CL_SUCCESS) {
+                    recordCallFailure("OpenCL device-memory hwc2chw synchronization failed");
+                    return;
+                }
+                clearCallFailures();
                 return;
             }
-            cl_int clRes1 = clEnqueueNDRangeKernel(openclqueue, hwc2chwOpenCLFun, 2, nullptr, global_size, nullptr, 0, nullptr, nullptr);
-            if (clRes1 != CL_SUCCESS) {
-                recordCallFailure("OpenCL device-memory hwc2chw launch failed");
-                return;
-            }
-            cl_int clRes2 = clFinish(openclqueue);
-            if (clRes2 != CL_SUCCESS) {
-                recordCallFailure("OpenCL device-memory hwc2chw synchronization failed");
-                return;
-            }
-            clearCallFailures();
-            return;
         }
 
         /**
         * @brief Converts image data from CHW format to HWC format
         *
+        * @tparam Stype Source data type
+        * @tparam Dtype Destination data type
+        * @tparam HasAlpha input alpha is requires participation in calculations
+        * @tparam NeedClamp input min_v and max_v are requires participation in calculations
         * @param c Number of channels
         * @param h Height of image
         * @param w Width of image
         * @param src OpenCL Memory (float) Pointer to the source data in CHW format
         * @param dst OpenCL Memory (uint8_t) Pointer to the destination data in HWC format
         * @param alpha Scaling factor
+        * @param min_v Minimum value for clamping
+        * @param max_v Maximum value for clamping
         */
+        template <typename Stype, typename Dtype,
+                  bool HasAlpha = false,
+                  bool NeedClamp = false>
         static void chw2hwc(
             const size_t c, const size_t h, const size_t w,
             const cl_mem src, const cl_mem dst,
-            const uint8_t alpha = 255.0f) {
+            const Dtype alpha = 1,
+            const Dtype min_v = 0, const Dtype max_v = 255) {
             opencl();
             if (c == 0 || h == 0 || w == 0 || src == nullptr || dst == nullptr) {
                 return;
             }
-            if (initOpenCLStatus.load(std::memory_order_acquire) != InitOpenCLStatusEnum::Inited) {
-                setLastError("OpenCL device-memory chw2hwc called before successful initialization.");
+            if constexpr (!isSupportedElementType<Stype, Dtype>()) {
+                setLastError("OpenCL device-memory chw2hwc requires uint8_t/float element types.");
                 return;
             }
-            std::lock_guard<std::mutex> lock(OpenCLMutex);
-            const size_t global_size[2] = { w, h };
-            // for ready opencl kernel function(opencl_chw2hwc)
-            cl_ulong arg_c_val = (cl_ulong)c;
-            cl_ulong arg_h_val = (cl_ulong)h;
-            cl_ulong arg_w_val = (cl_ulong)w;
-            cl_float arg_alpha_val = (cl_float)alpha;
-            cl_int clRes0 = clSetKernelArg(chw2hwcOpenCLFun, 0, sizeof(cl_ulong), &arg_c_val);
-            if (clRes0 == CL_SUCCESS) { clRes0 = clSetKernelArg(chw2hwcOpenCLFun, 1, sizeof(cl_ulong), &arg_h_val); }
-            if (clRes0 == CL_SUCCESS) { clRes0 = clSetKernelArg(chw2hwcOpenCLFun, 2, sizeof(cl_ulong), &arg_w_val); }
-            if (clRes0 == CL_SUCCESS) { clRes0 = clSetKernelArg(chw2hwcOpenCLFun, 3, sizeof(cl_mem), &src); }
-            if (clRes0 == CL_SUCCESS) { clRes0 = clSetKernelArg(chw2hwcOpenCLFun, 4, sizeof(cl_mem), &dst); }
-            if (clRes0 == CL_SUCCESS) { clRes0 = clSetKernelArg(chw2hwcOpenCLFun, 5, sizeof(cl_float), &arg_alpha_val); }
-            if (clRes0 != CL_SUCCESS) {
-                recordCallFailure("OpenCL device-memory chw2hwc launch failed");
+            else {
+                if (initOpenCLStatus.load(std::memory_order_acquire) != InitOpenCLStatusEnum::Inited) {
+                    setLastError("OpenCL device-memory chw2hwc called before successful initialization.");
+                    return;
+                }
+                std::lock_guard<std::mutex> lock(OpenCLMutex);
+                const bool launch_ok = runChw2hwcKernel(c, h, w, src, dst,
+                    isFloatElementType<Stype>(), isFloatElementType<Dtype>(),
+                    HasAlpha, NeedClamp,
+                    (float)alpha, (float)min_v, (float)max_v);
+                if (!launch_ok) {
+                    recordCallFailure("OpenCL device-memory chw2hwc launch failed");
+                    return;
+                }
+                cl_int clRes = clFinish(openclqueue);
+                if (clRes != CL_SUCCESS) {
+                    recordCallFailure("OpenCL device-memory chw2hwc synchronization failed");
+                    return;
+                }
+                clearCallFailures();
                 return;
             }
-            cl_int clRes1 = clEnqueueNDRangeKernel(openclqueue, chw2hwcOpenCLFun, 2, nullptr, global_size, nullptr, 0, nullptr, nullptr);
-            if (clRes1 != CL_SUCCESS) {
-                recordCallFailure("OpenCL device-memory chw2hwc launch failed");
-                return;
-            }
-            cl_int clRes2 = clFinish(openclqueue);
-            if (clRes2 != CL_SUCCESS) {
-                recordCallFailure("OpenCL device-memory chw2hwc synchronization failed");
-                return;
-            }
-            clearCallFailures();
-            return;
         }
 
         /**
@@ -802,20 +853,151 @@ enum struct InitOpenCLStatusEnum : int
         }
 
     private:
-        // GPU and CPU fallback kernels clamp float->uint8 values before the
-        // narrow.  This avoids undefined behavior and keeps results identical.
-        static void fallbackToCpuHwc2chw(size_t h, size_t w, size_t c,
-            const uint8_t* src, float* dst, float alpha, const char* message)
-        {
-            recordCallFailure(message);
-            cpu::hwc2chw<uint8_t, float, true>(h, w, c, src, dst, alpha);
+        // The GPU kernels cover uint8_t and float element types; every other
+        // Stype/Dtype combination keeps full CPU behavior via the fallback path.
+        template <typename Stype, typename Dtype>
+        static constexpr bool isSupportedElementType() {
+            return (std::is_same<Stype, uint8_t>::value || std::is_same<Stype, float>::value) &&
+                   (std::is_same<Dtype, uint8_t>::value || std::is_same<Dtype, float>::value);
         }
 
-        static void fallbackToCpuChw2hwc(size_t c, size_t h, size_t w,
-            const float* src, uint8_t* dst, uint8_t alpha, const char* message)
+        template <typename Type>
+        static constexpr bool isFloatElementType() {
+            return std::is_same<Type, float>::value;
+        }
+
+        static bool runHwc2chwKernel(
+            const size_t h, const size_t w, const size_t c,
+            const cl_mem src, const cl_mem dst,
+            const bool src_is_float, const bool dst_is_float,
+            const bool has_alpha, const bool need_clamp, const bool need_norm,
+            const float alpha, const float min_v, const float max_v,
+            const std::array<float, 3>& mean, const std::array<float, 3>& stds)
+        {
+            if (hwc2chwOpenCLFun == nullptr) {
+                return false;
+            }
+            const cl_ulong arg_h_val = (cl_ulong)h;
+            const cl_ulong arg_w_val = (cl_ulong)w;
+            const cl_ulong arg_c_val = (cl_ulong)c;
+            const cl_mem arg_src_val = src;
+            const cl_mem arg_dst_val = dst;
+            const cl_int arg_src_is_float_val = src_is_float ? 1 : 0;
+            const cl_int arg_dst_is_float_val = dst_is_float ? 1 : 0;
+            const cl_int arg_has_alpha_val = has_alpha ? 1 : 0;
+            const cl_int arg_need_clamp_val = need_clamp ? 1 : 0;
+            const cl_int arg_need_norm_val = need_norm ? 1 : 0;
+            const cl_float arg_alpha_val = alpha;
+            const cl_float arg_min_v_val = min_v;
+            const cl_float arg_max_v_val = max_v;
+            const cl_float arg_mean_vals[3] = { mean[0], mean[1], mean[2] };
+            const cl_float arg_std_vals[3] = { stds[0], stds[1], stds[2] };
+            // for ready opencl kernel function(opencl_hwc2chw)
+            cl_int clRes = CL_SUCCESS;
+            const auto set_arg = [&](const cl_uint index, const size_t size, const void* value) {
+                if (clRes == CL_SUCCESS) {
+                    clRes = clSetKernelArg(hwc2chwOpenCLFun, index, size, value);
+                }
+            };
+            set_arg(0, sizeof(cl_ulong), &arg_h_val);
+            set_arg(1, sizeof(cl_ulong), &arg_w_val);
+            set_arg(2, sizeof(cl_ulong), &arg_c_val);
+            set_arg(3, sizeof(cl_mem), &arg_src_val);
+            set_arg(4, sizeof(cl_mem), &arg_dst_val);
+            set_arg(5, sizeof(cl_int), &arg_src_is_float_val);
+            set_arg(6, sizeof(cl_int), &arg_dst_is_float_val);
+            set_arg(7, sizeof(cl_int), &arg_has_alpha_val);
+            set_arg(8, sizeof(cl_int), &arg_need_clamp_val);
+            set_arg(9, sizeof(cl_int), &arg_need_norm_val);
+            set_arg(10, sizeof(cl_float), &arg_alpha_val);
+            set_arg(11, sizeof(cl_float), &arg_min_v_val);
+            set_arg(12, sizeof(cl_float), &arg_max_v_val);
+            set_arg(13, sizeof(cl_float), &arg_mean_vals[0]);
+            set_arg(14, sizeof(cl_float), &arg_mean_vals[1]);
+            set_arg(15, sizeof(cl_float), &arg_mean_vals[2]);
+            set_arg(16, sizeof(cl_float), &arg_std_vals[0]);
+            set_arg(17, sizeof(cl_float), &arg_std_vals[1]);
+            set_arg(18, sizeof(cl_float), &arg_std_vals[2]);
+            if (clRes != CL_SUCCESS) {
+                return false;
+            }
+            const size_t global_size[2] = { w, h };
+            clRes = clEnqueueNDRangeKernel(openclqueue, hwc2chwOpenCLFun, 2, nullptr, global_size, nullptr, 0, nullptr, nullptr);
+            return clRes == CL_SUCCESS;
+        }
+
+        static bool runChw2hwcKernel(
+            const size_t c, const size_t h, const size_t w,
+            const cl_mem src, const cl_mem dst,
+            const bool src_is_float, const bool dst_is_float,
+            const bool has_alpha, const bool need_clamp,
+            const float alpha, const float min_v, const float max_v)
+        {
+            if (chw2hwcOpenCLFun == nullptr) {
+                return false;
+            }
+            const cl_ulong arg_c_val = (cl_ulong)c;
+            const cl_ulong arg_h_val = (cl_ulong)h;
+            const cl_ulong arg_w_val = (cl_ulong)w;
+            const cl_mem arg_src_val = src;
+            const cl_mem arg_dst_val = dst;
+            const cl_int arg_src_is_float_val = src_is_float ? 1 : 0;
+            const cl_int arg_dst_is_float_val = dst_is_float ? 1 : 0;
+            const cl_int arg_has_alpha_val = has_alpha ? 1 : 0;
+            const cl_int arg_need_clamp_val = need_clamp ? 1 : 0;
+            const cl_float arg_alpha_val = alpha;
+            const cl_float arg_min_v_val = min_v;
+            const cl_float arg_max_v_val = max_v;
+            // for ready opencl kernel function(opencl_chw2hwc)
+            cl_int clRes = CL_SUCCESS;
+            const auto set_arg = [&](const cl_uint index, const size_t size, const void* value) {
+                if (clRes == CL_SUCCESS) {
+                    clRes = clSetKernelArg(chw2hwcOpenCLFun, index, size, value);
+                }
+            };
+            set_arg(0, sizeof(cl_ulong), &arg_c_val);
+            set_arg(1, sizeof(cl_ulong), &arg_h_val);
+            set_arg(2, sizeof(cl_ulong), &arg_w_val);
+            set_arg(3, sizeof(cl_mem), &arg_src_val);
+            set_arg(4, sizeof(cl_mem), &arg_dst_val);
+            set_arg(5, sizeof(cl_int), &arg_src_is_float_val);
+            set_arg(6, sizeof(cl_int), &arg_dst_is_float_val);
+            set_arg(7, sizeof(cl_int), &arg_has_alpha_val);
+            set_arg(8, sizeof(cl_int), &arg_need_clamp_val);
+            set_arg(9, sizeof(cl_float), &arg_alpha_val);
+            set_arg(10, sizeof(cl_float), &arg_min_v_val);
+            set_arg(11, sizeof(cl_float), &arg_max_v_val);
+            if (clRes != CL_SUCCESS) {
+                return false;
+            }
+            const size_t global_size[2] = { w, h };
+            clRes = clEnqueueNDRangeKernel(openclqueue, chw2hwcOpenCLFun, 2, nullptr, global_size, nullptr, 0, nullptr, nullptr);
+            return clRes == CL_SUCCESS;
+        }
+
+        // GPU and CPU fallback kernels clamp float->uint8 values before the
+        // narrow.  This avoids undefined behavior and keeps results identical.
+        template <typename Stype, typename Dtype,
+                  bool HasAlpha, bool NeedClamp, bool NeedNormalizedMeanStds>
+        static void fallbackToCpuHwc2chw(size_t h, size_t w, size_t c,
+            const Stype* src, Dtype* dst, const Dtype alpha,
+            const Dtype min_v, const Dtype max_v,
+            const std::array<float, 3>& mean, const std::array<float, 3>& stds,
+            const char* message)
         {
             recordCallFailure(message);
-            cpu::chw2hwc<float, uint8_t, true, true>(c, h, w, src, dst, alpha);
+            cpu::hwc2chw<Stype, Dtype, HasAlpha, NeedClamp, NeedNormalizedMeanStds>(h, w, c, src, dst, alpha, min_v, max_v, mean, stds);
+        }
+
+        template <typename Stype, typename Dtype,
+                  bool HasAlpha, bool NeedClamp>
+        static void fallbackToCpuChw2hwc(size_t c, size_t h, size_t w,
+            const Stype* src, Dtype* dst, const Dtype alpha,
+            const Dtype min_v, const Dtype max_v,
+            const char* message)
+        {
+            recordCallFailure(message);
+            cpu::chw2hwc<Stype, Dtype, HasAlpha, NeedClamp>(c, h, w, src, dst, alpha, min_v, max_v);
         }
 
         static void setLastError(const std::string& message)

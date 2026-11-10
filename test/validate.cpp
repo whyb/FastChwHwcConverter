@@ -3,7 +3,9 @@
 #include <cmath>
 #include <cstdint>
 #include <iostream>
+#include <memory>
 #include <string>
+#include <type_traits>
 #include <vector>
 
 #include "FastChwHwcConverter.hpp"
@@ -174,23 +176,229 @@ void validate_cpu() {
 }
 
 // ---------------------------------------------------------------------------
-// GPU backends vs CPU. The GPU kernels implement a fixed transform:
-//   hwc2chw : dst = (float)src * alpha             (CHW output, no clamping)
-//   chw2hwc : dst = clamp(src * alpha, 0, 255)     (HWC output)
-// which corresponds to the CPU templates used in the comparison below.
+// GPU backends vs CPU. The GPU kernels implement the same transform chain as
+// the CPU templates:
+//   hwc2chw : dst = clamp((src * alpha - mean) / stds)   (CHW output)
+//   chw2hwc : dst = clamp(src * alpha)                   (HWC output)
+//
+// The GPU kernels cover the uint8_t and float element types; every other
+// Stype/Dtype combination routes through the automatic CPU fallback, so this
+// comparison also validates that dispatch. The sweep below runs the full
+// Stype x Dtype x HasAlpha x NeedClamp( x NeedNormalizedMeanStds) permutation
+// matrix over the basic data types, with a value profile that keeps every
+// intermediate representable for every Dtype (see check_gpu_hwc2chw).
 // ---------------------------------------------------------------------------
 
-struct GpuBackend {
-    const char* name;
-    bool (*init_fn)();
-    bool (*release_fn)();
-    void (*hwc2chw_fn)(size_t, size_t, size_t, const uint8_t*, float*, float);
-    void (*chw2hwc_fn)(size_t, size_t, size_t, const float*, uint8_t*, uint8_t);
-};
+template <typename... Types>
+struct type_list {};
 
-void validate_gpu_backend(const GpuBackend& gpu) {
-    if (!gpu.init_fn()) {
-        std::cout << "validate: " << gpu.name << " not available, skipped." << std::endl;
+using AllElementTypes = type_list<bool, int8_t, uint8_t, int16_t, uint16_t,
+                                 int32_t, uint32_t, int64_t, uint64_t, float, double>;
+
+// Human readable type tag for failure messages.
+template <typename T>
+std::string type_tag() {
+    if constexpr (std::is_same<T, bool>::value) { return "bool"; }
+    else if constexpr (std::is_same<T, int8_t>::value) { return "int8"; }
+    else if constexpr (std::is_same<T, uint8_t>::value) { return "uint8"; }
+    else if constexpr (std::is_same<T, int16_t>::value) { return "int16"; }
+    else if constexpr (std::is_same<T, uint16_t>::value) { return "uint16"; }
+    else if constexpr (std::is_same<T, int32_t>::value) { return "int32"; }
+    else if constexpr (std::is_same<T, uint32_t>::value) { return "uint32"; }
+    else if constexpr (std::is_same<T, int64_t>::value) { return "int64"; }
+    else if constexpr (std::is_same<T, uint64_t>::value) { return "uint64"; }
+    else if constexpr (std::is_same<T, float>::value) { return "float"; }
+    else if constexpr (std::is_same<T, double>::value) { return "double"; }
+    else { return "unknown"; }
+}
+
+// Fills count elements with random values whose real value lies in [lo, hi].
+template <typename T>
+void fill_random(T* dst, const size_t count, const float lo, const float hi) {
+    const auto values = whyb_test::random_f32(count, lo, hi);
+    for (size_t i = 0; i < count; ++i) {
+        if constexpr (std::is_same<T, bool>::value) {
+            dst[i] = values[i] >= 0.5f;
+        }
+        else {
+            dst[i] = static_cast<T>(values[i]);
+        }
+    }
+}
+
+// float/double outputs tolerate tiny FP differences (e.g. FMA contraction on
+// the normalization path). Integer outputs must match exactly, except for the
+// normalization path where one float-rounding truncation flip is tolerated.
+template <typename Dtype, bool FuzzyNarrow>
+void compare_outputs(const std::string& what,
+                     const Dtype* expected, const Dtype* actual, const size_t count) {
+    for (size_t i = 0; i < count; ++i) {
+        if constexpr (std::is_floating_point<Dtype>::value) {
+            const double ev = static_cast<double>(expected[i]);
+            const double av = static_cast<double>(actual[i]);
+            const double scale = (std::max)({ 1.0, std::fabs(ev), std::fabs(av) });
+            if (std::fabs(ev - av) > 1e-4 * scale) {
+                report_error(what, "vs CPU", i, static_cast<float>(ev), static_cast<float>(av));
+            }
+        }
+        else {
+            const long long ev = static_cast<long long>(expected[i]);
+            const long long av = static_cast<long long>(actual[i]);
+            const long long diff = (ev > av) ? (ev - av) : (av - ev);
+            if (diff > (FuzzyNarrow ? 1LL : 0LL)) {
+                report_error(what, "vs CPU", i, static_cast<float>(ev), static_cast<float>(av));
+            }
+        }
+    }
+}
+
+template <typename Stype, typename Dtype>
+std::string gpu_check_name(const char* name, const char* op, const size_t c,
+                           const bool a, const bool cl, const bool nm) {
+    return features_str((std::string(name) + "." + op + "<" + type_tag<Stype>() +
+                        "," + type_tag<Dtype>() + ">").c_str(), c, a, cl, nm);
+}
+
+template <typename Backend, typename Stype, typename Dtype,
+          bool HasAlpha, bool NeedClamp, bool NeedNormalizedMeanStds>
+void run_gpu_hwc2chw(const char* name, const size_t h, const size_t w, const size_t c,
+                     const Dtype alpha, const Dtype min_v, const Dtype max_v,
+                     const std::array<float, 3>& mean, const std::array<float, 3>& stds,
+                     const float src_lo, const float src_hi) {
+    const size_t pixel_count = h * w * c;
+    std::unique_ptr<Stype[]> src(new Stype[pixel_count]);
+    std::unique_ptr<Dtype[]> cpu_out(new Dtype[pixel_count]);
+    std::unique_ptr<Dtype[]> gpu_out(new Dtype[pixel_count]);
+    fill_random<Stype>(src.get(), pixel_count, src_lo, src_hi);
+
+    whyb::cpu::hwc2chw<Stype, Dtype, HasAlpha, NeedClamp, NeedNormalizedMeanStds>(
+        h, w, c, src.get(), cpu_out.get(), alpha, min_v, max_v, mean, stds);
+    Backend::template hwc2chw<Stype, Dtype, HasAlpha, NeedClamp, NeedNormalizedMeanStds>(
+        h, w, c, src.get(), gpu_out.get(), alpha, min_v, max_v, mean, stds);
+
+    constexpr bool fuzzy_narrow = std::is_integral<Dtype>::value &&
+                                  !std::is_same<Dtype, bool>::value &&
+                                  NeedNormalizedMeanStds;
+    compare_outputs<Dtype, fuzzy_narrow>(
+        gpu_check_name<Stype, Dtype>(name, "hwc2chw", c, HasAlpha, NeedClamp, NeedNormalizedMeanStds),
+        cpu_out.get(), gpu_out.get(), pixel_count);
+}
+
+template <typename Backend, typename Stype, typename Dtype,
+          bool HasAlpha, bool NeedClamp>
+void run_gpu_chw2hwc(const char* name, const size_t h, const size_t w, const size_t c,
+                     const Dtype alpha, const Dtype min_v, const Dtype max_v,
+                     const float src_lo, const float src_hi) {
+    const size_t pixel_count = h * w * c;
+    std::unique_ptr<Stype[]> src(new Stype[pixel_count]);
+    std::unique_ptr<Dtype[]> cpu_out(new Dtype[pixel_count]);
+    std::unique_ptr<Dtype[]> gpu_out(new Dtype[pixel_count]);
+    fill_random<Stype>(src.get(), pixel_count, src_lo, src_hi);
+
+    whyb::cpu::chw2hwc<Stype, Dtype, HasAlpha, NeedClamp>(
+        c, h, w, src.get(), cpu_out.get(), alpha, min_v, max_v);
+    Backend::template chw2hwc<Stype, Dtype, HasAlpha, NeedClamp>(
+        c, h, w, src.get(), gpu_out.get(), alpha, min_v, max_v);
+
+    compare_outputs<Dtype, false>(
+        gpu_check_name<Stype, Dtype>(name, "chw2hwc", c, HasAlpha, NeedClamp, false),
+        cpu_out.get(), gpu_out.get(), pixel_count);
+}
+
+// Value profile for the permutation sweep: integer sources in [0, 3], other
+// sources in [0, 1], alpha = 2, so every intermediate stays representable for
+// every Dtype. The normalization branch may only produce negatives when the
+// output type is float/double/bool or clamping protects the narrow cast; for
+// the remaining combinations it runs with non-negative mean/stds instead.
+template <typename Backend, typename Stype, typename Dtype,
+          bool HasAlpha, bool NeedClamp, bool NeedNormalizedMeanStds>
+void check_gpu_hwc2chw(const char* name, const size_t h, const size_t w, const size_t c) {
+    const bool delicate_cast = NeedNormalizedMeanStds && !NeedClamp &&
+        std::is_integral<Dtype>::value && !std::is_same<Dtype, bool>::value;
+    const Dtype alpha = static_cast<Dtype>(2);
+    const Dtype min_v = static_cast<Dtype>(0);
+    const Dtype max_v = static_cast<Dtype>(3);
+    const std::array<float, 3> mean = { 0.25f, 0.5f, 0.75f };
+    const std::array<float, 3> stds = { 0.5f, 0.5f, 0.5f };
+    const std::array<float, 3> safe_mean = { 0.0f, 0.0f, 0.0f };
+    const std::array<float, 3> safe_stds = { 0.5f, 0.5f, 0.5f };
+    const float src_hi = std::is_same<Stype, bool>::value ? 1.0f
+                       : (std::is_integral<Stype>::value ? 3.0f : 1.0f);
+    run_gpu_hwc2chw<Backend, Stype, Dtype, HasAlpha, NeedClamp, NeedNormalizedMeanStds>(
+        name, h, w, c, alpha, min_v, max_v,
+        delicate_cast ? safe_mean : mean, delicate_cast ? safe_stds : stds,
+        0.0f, src_hi);
+}
+
+template <typename Backend, typename Stype, typename Dtype,
+          bool HasAlpha, bool NeedClamp>
+void check_gpu_chw2hwc(const char* name, const size_t h, const size_t w, const size_t c) {
+    const Dtype alpha = static_cast<Dtype>(2);
+    const Dtype min_v = static_cast<Dtype>(0);
+    const Dtype max_v = static_cast<Dtype>(3);
+    const float src_hi = std::is_same<Stype, bool>::value ? 1.0f
+                       : (std::is_integral<Stype>::value ? 3.0f : 1.0f);
+    run_gpu_chw2hwc<Backend, Stype, Dtype, HasAlpha, NeedClamp>(
+        name, h, w, c, alpha, min_v, max_v, 0.0f, src_hi);
+}
+
+// All HasAlpha / NeedClamp / NeedNormalizedMeanStds combinations.
+template <typename Backend, typename Stype, typename Dtype>
+void sweep_gpu_hwc2chw_flags(const char* name, const size_t h, const size_t w, const size_t c) {
+    check_gpu_hwc2chw<Backend, Stype, Dtype, false, false, false>(name, h, w, c);
+    check_gpu_hwc2chw<Backend, Stype, Dtype, true, false, false>(name, h, w, c);
+    check_gpu_hwc2chw<Backend, Stype, Dtype, false, true, false>(name, h, w, c);
+    check_gpu_hwc2chw<Backend, Stype, Dtype, false, false, true>(name, h, w, c);
+    check_gpu_hwc2chw<Backend, Stype, Dtype, true, true, false>(name, h, w, c);
+    check_gpu_hwc2chw<Backend, Stype, Dtype, true, false, true>(name, h, w, c);
+    check_gpu_hwc2chw<Backend, Stype, Dtype, false, true, true>(name, h, w, c);
+    check_gpu_hwc2chw<Backend, Stype, Dtype, true, true, true>(name, h, w, c);
+}
+
+template <typename Backend, typename Stype, typename Dtype>
+void sweep_gpu_chw2hwc_flags(const char* name, const size_t h, const size_t w, const size_t c) {
+    check_gpu_chw2hwc<Backend, Stype, Dtype, false, false>(name, h, w, c);
+    check_gpu_chw2hwc<Backend, Stype, Dtype, true, false>(name, h, w, c);
+    check_gpu_chw2hwc<Backend, Stype, Dtype, false, true>(name, h, w, c);
+    check_gpu_chw2hwc<Backend, Stype, Dtype, true, true>(name, h, w, c);
+}
+
+template <typename Backend, typename Stype, typename Dtype>
+void sweep_gpu_dst_type(const char* name, const size_t h, const size_t w, const size_t c) {
+    sweep_gpu_hwc2chw_flags<Backend, Stype, Dtype>(name, h, w, c);
+    sweep_gpu_chw2hwc_flags<Backend, Stype, Dtype>(name, h, w, c);
+}
+
+template <typename Backend, typename Stype, typename... Dtypes>
+void sweep_gpu_type_pairs(const char* name, const size_t h, const size_t w, const size_t c,
+                          type_list<Dtypes...>) {
+    (sweep_gpu_dst_type<Backend, Stype, Dtypes>(name, h, w, c), ...);
+}
+
+template <typename Backend, typename... Stypes>
+void sweep_gpu_source_types(const char* name, const size_t h, const size_t w, const size_t c,
+                            type_list<Stypes...>) {
+    (sweep_gpu_type_pairs<Backend, Stypes>(name, h, w, c, AllElementTypes{}), ...);
+}
+
+// Non-default alpha / min_v / max_v / mean / stds values.
+template <typename Backend>
+void check_gpu_custom_parameters(const char* name, const size_t h, const size_t w, const size_t c) {
+    run_gpu_hwc2chw<Backend, uint8_t, float, true, true, true>(
+        name, h, w, c, 1.0f / 255.0f, -1.0f, 1.0f,
+        { 0.5f, 0.4f, 0.3f }, { 0.5f, 0.25f, 0.1f }, 0.0f, 255.0f);
+    run_gpu_chw2hwc<Backend, float, uint8_t, true, true>(
+        name, h, w, c, uint8_t(255), uint8_t(0), uint8_t(255), -0.5f, 1.5f);
+    run_gpu_chw2hwc<Backend, float, uint8_t, false, true>(
+        name, h, w, c, uint8_t(1), uint8_t(16), uint8_t(235), -0.5f, 1.5f);
+    run_gpu_chw2hwc<Backend, float, float, true, false>(
+        name, h, w, c, 2.0f, 0.0f, 255.0f, -0.5f, 1.5f);
+}
+
+template <typename Backend>
+void validate_gpu_backend(const char* name) {
+    if (!Backend::init()) {
+        std::cout << "validate: " << name << " not available, skipped." << std::endl;
         return;
     }
 
@@ -199,87 +407,23 @@ void validate_gpu_backend(const GpuBackend& gpu) {
         const size_t h = sizes[si][0];
         const size_t w = sizes[si][1];
         for (const size_t c : { size_t(1), size_t(3), size_t(4) }) {
-            const size_t pixel_count = h * w * c;
-
-            // hwc2chw (uint8 -> float) == cpu::hwc2chw<uint8_t,float,true>
-            {
-                const auto src = whyb_test::random_u8(pixel_count);
-                std::vector<float> cpu_out(pixel_count, -1.0f);
-                std::vector<float> gpu_out(pixel_count, -2.0f);
-                const float alpha = 1.0f / 255.0f;
-                whyb::cpu::hwc2chw<uint8_t, float, true, false, false>(
-                    h, w, c, src.data(), cpu_out.data(), alpha);
-                gpu.hwc2chw_fn(h, w, c, src.data(), gpu_out.data(), alpha);
-                const std::string what = std::string(gpu.name) + ".hwc2chw c=" + std::to_string(c);
-                for (size_t i = 0; i < pixel_count; ++i) {
-                    if (!approx_equal(cpu_out[i], gpu_out[i])) {
-                        report_error(what, "vs CPU", i, cpu_out[i], gpu_out[i]);
-                    }
-                }
-            }
-
-            // chw2hwc (float -> uint8) == cpu::chw2hwc<float,uint8_t,true,true>
-            {
-                const auto src = whyb_test::random_f32(pixel_count, -0.5f, 1.5f);
-                std::vector<uint8_t> cpu_out(pixel_count, 0);
-                std::vector<uint8_t> gpu_out(pixel_count, 0);
-                const uint8_t alpha = 255;
-                whyb::cpu::chw2hwc<float, uint8_t, true, true>(
-                    c, h, w, src.data(), cpu_out.data(), alpha, 0, 255);
-                gpu.chw2hwc_fn(c, h, w, src.data(), gpu_out.data(), alpha);
-                const std::string what = std::string(gpu.name) + ".chw2hwc c=" + std::to_string(c);
-                for (size_t i = 0; i < pixel_count; ++i) {
-                    if (cpu_out[i] != gpu_out[i]) {
-                        report_error(what, "vs CPU", i, static_cast<float>(cpu_out[i]),
-                                     static_cast<float>(gpu_out[i]));
-                    }
-                }
-            }
+            // Full Stype x Dtype x HasAlpha x NeedClamp( x NeedNormalizedMeanStds)
+            // permutation matrix over all basic data types.
+            sweep_gpu_source_types<Backend>(name, h, w, c, AllElementTypes{});
+            check_gpu_custom_parameters<Backend>(name, h, w, c);
         }
     }
 
-    gpu.release_fn();
-    std::cout << "validate: " << gpu.name << " passed." << std::endl;
+    Backend::release();
+    std::cout << "validate: " << name << " passed." << std::endl;
 }
 
 void validate_gpus() {
-    validate_gpu_backend({ "cuda",
-                           &whyb::nvidia::init, &whyb::nvidia::release,
-                           [](size_t h, size_t w, size_t c, const uint8_t* s, float* d, float a) {
-                               whyb::nvidia::hwc2chw(h, w, c, s, d, a);
-                           },
-                           [](size_t c, size_t h, size_t w, const float* s, uint8_t* d, uint8_t a) {
-                               whyb::nvidia::chw2hwc(c, h, w, s, d, a);
-                           } });
-
-    validate_gpu_backend({ "rocm",
-                           &whyb::amd::init, &whyb::amd::release,
-                           [](size_t h, size_t w, size_t c, const uint8_t* s, float* d, float a) {
-                               whyb::amd::hwc2chw(h, w, c, s, d, a);
-                           },
-                           [](size_t c, size_t h, size_t w, const float* s, uint8_t* d, uint8_t a) {
-                               whyb::amd::chw2hwc(c, h, w, s, d, a);
-                           } });
-
-    validate_gpu_backend({ "vulkan",
-                           &whyb::vulkan::init, &whyb::vulkan::release,
-                           [](size_t h, size_t w, size_t c, const uint8_t* s, float* d, float a) {
-                               whyb::vulkan::hwc2chw(h, w, c, s, d, a);
-                           },
-                           [](size_t c, size_t h, size_t w, const float* s, uint8_t* d, uint8_t a) {
-                               whyb::vulkan::chw2hwc(c, h, w, s, d, a);
-                           } });
-
-    validate_gpu_backend({ "opencl",
-                           &whyb::opencl::init, &whyb::opencl::release,
-                           [](size_t h, size_t w, size_t c, const uint8_t* s, float* d, float a) {
-                               whyb::opencl::hwc2chw(h, w, c, s, d, a);
-                           },
-                           [](size_t c, size_t h, size_t w, const float* s, uint8_t* d, uint8_t a) {
-                               whyb::opencl::chw2hwc(c, h, w, s, d, a);
-                           } });
+    validate_gpu_backend<whyb::nvidia>("cuda");
+    validate_gpu_backend<whyb::amd>("rocm");
+    validate_gpu_backend<whyb::vulkan>("vulkan");
+    validate_gpu_backend<whyb::opencl>("opencl");
 }
-
 } // namespace
 
 int main() {

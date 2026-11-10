@@ -11,37 +11,18 @@ FastChwHwcConverter.hpp is a high-performance, multi-threaded, header-only C++ l
 ### GPU Acceleration (NVIDIA CUDA)
 FastChwHwcConverterCuda.hpp is a high-performance, GPU-accelerated library for converting image data formats between **HWC** and **CHW**, supporting CUDA versions 10.0+ and above. It requires no installation of the CUDA SDK, header files, or static linking. The library dynamically loads CUDA libraries from the system path. It will automatically search for CUDA's dynamic link library from the system path and dynamically load the functions inside and use them.
 
-
-**Note**: If your operating environment does not support CUDA or does not meet the conditions for using CUDA acceleration, it will automatically fall back to the CPU (OpenMP/C++ Thread/Intel oneTBB) for processing.
-The functions support passing in cuda device memory and host memory parameters.
-
-
 ### GPU Acceleration (AMD ROCm)
 FastChwHwcConverterROCm.hpp is a high-performance, GPU-accelerated library for converting image data formats between **HWC** and **CHW**, supporting ROCm versions 5.0+ and above. Like the CUDA library, it does not require the ROCm (HIP) SDK, header files, or static linking, and dynamically loads ROCm libraries from the system path.
-
-
-**Note**: If your operating environment does not support ROCm or does not meet the conditions for using ROCm acceleration, it will automatically fall back to the CPU (OpenMP/C++ Thread/Intel oneTBB) for processing.
-The functions support passing in ROCm device memory and host memory parameters.
-
 
 ### GPU Acceleration (Vulkan)
 FastChwHwcConverterVulkan.hpp is a high-performance, GPU-accelerated library for converting image data formats between **HWC** and **CHW**, using the Vulkan compute API. Like the CUDA and ROCm libraries, it does not require the Vulkan SDK headers or static linking: at runtime it loads `vulkan-1.dll` / `libvulkan.so.1` (or `libMoltenVK.dylib` on macOS) and uses the **glslang** shared library (bundled with the Vulkan Runtime/SDK) to compile the embedded GLSL compute shaders into SPIR-V on first use. It automatically picks the physical device with the strongest compute capability (discrete GPU first) and the most device-local memory.
 
-
-**Note**: If your operating environment does not support Vulkan or does not meet the conditions for using Vulkan acceleration, it will automatically fall back to the CPU (OpenMP/C++ Thread/Intel oneTBB) for processing.
-The functions support passing in Vulkan buffer (device memory) and host memory parameters. The Vulkan backend is only enabled when the Vulkan SDK is found by CMake (`BUILD_VULKAN_BENCHMARK`), otherwise it is skipped.
-
-
 ### GPU Acceleration (OpenCL)
-FastChwHwcConverterOpenCL.hpp is a high-performance, GPU-accelerated library for converting image data formats between **HWC** and **CHW**, using the OpenCL compute API. Like the CUDA, ROCm and Vulkan libraries, it does not require the OpenCL SDK headers or static linking: at runtime it loads the system OpenCL ICD loader (`OpenCL.dll` / `libOpenCL.so.1` / `OpenCL.framework` on macOS) and compiles the embedded OpenCL C kernels on first use. It automatically picks the platform/device with the strongest compute capability (GPU first, then more compute units and higher clock frequency).
+FastChwHwcConverterOpenCL.hpp is a high-performance, GPU-accelerated library for converting image data formats between **HWC** and **CHW**, using the OpenCL compute API. Like the CUDA, ROCm and Vulkan libraries, it does not require the OpenCL SDK headers or static linking: at runtime it loads the system OpenCL ICD loader (`OpenCL.dll` / `libOpenCL.so.1` / `OpenCL.framework` on macOS) and compiles the embedded OpenCL C kernels on first use. It automatically picks the platform/device with the strongest compute capability (GPU first, then more compute units and higher clock frequency). No OpenCL header files are copied into this project: the backend declares its own minimal OpenCL ABI types and dynamically loads everything from the system.
 
-
-**Note**: If your operating environment does not support OpenCL or does not meet the conditions for using OpenCL acceleration, it will automatically fall back to the CPU (OpenMP/C++ Thread/Intel oneTBB) for processing.
-The functions support passing in OpenCL memory (cl_mem device buffer) and host memory parameters. No OpenCL header files are copied into this project: the backend declares its own minimal OpenCL ABI types and dynamically loads everything from the system. The `BUILD_OPENCL_BENCHMARK` CMake switch only controls whether the OpenCL benchmark target is generated.
-
+**Note (all GPU backends)**: If your operating environment does not support a GPU backend or does not meet the conditions for using it, it will automatically fall back to the CPU (OpenMP/C++ Thread/Intel oneTBB) for processing. Every GPU backend shares the same template API as the CPU backend (the `HasAlpha` / `NeedClamp` / `NeedNormalizedMeanStds` template parameters and the `alpha` / `min_v` / `max_v` / `mean` / `stds` parameters, any `Stype`/`Dtype`; the GPU accelerates the `uint8_t` and `float` element types and automatically falls back to the CPU for any other type). The functions support passing in host memory or device memory parameters (`CUdeviceptr` for CUDA, `hipDeviceptr_t` for ROCm, `VkBuffer` for Vulkan, `cl_mem` for OpenCL).
 
 Any similar type conversion code you find another project on GitHub will most likely only achieve performance close to the speed of [single-thread execution](#benchmark-performance-timing-results).
-
 ## Table of Contents
 - [Overview](#overview)
   - [Multi-Core CPU Implementation (C++Thread-OpenMP-oneTBB)](#multi-core-cpu-implementation-cthread-openmp-onetbb)
@@ -58,21 +39,11 @@ Any similar type conversion code you find another project on GitHub will most li
   - [for CPU (C++ Thread)](#for-cpu-c-thread)
   - [for CPU (OpenMP)](#for-cpu-openmp)
   - [for CPU (oneTBB)](#for-cpu-onetbb)
-  - [for GPU (CUDA or ROCm)](#for-gpu-cuda-or-rocm)
-  - [for GPU (Vulkan)](#for-gpu-vulkan)
-  - [for GPU (OpenCL)](#for-gpu-opencl)
+  - [for GPU (CUDA / ROCm / Vulkan / OpenCL)](#for-gpu-cuda--rocm--vulkan--opencl)
 - [Requirements](#requirements)
 - [API Documents](#api-documents)
-  - [HWC -> CHW (CPU)](#hwc-to-chw-conversion-cpu)
-  - [CHW -> HWC (CPU)](#chw-to-hwc-conversion-cpu)
-  - [HWC -> CHW (CUDA)](#hwc-to-chw-conversion-cuda)
-  - [CHW -> HWC (CUDA)](#chw-to-hwc-conversion-cuda)
-  - [HWC -> CHW (ROCm)](#hwc-to-chw-conversion-rocm)
-  - [CHW -> HWC (ROCm)](#chw-to-hwc-conversion-rocm)
-  - [HWC -> CHW (Vulkan)](#hwc-to-chw-conversion-vulkan)
-  - [CHW -> HWC (Vulkan)](#chw-to-hwc-conversion-vulkan)
-  - [HWC -> CHW (OpenCL)](#hwc-to-chw-conversion-opencl)
-  - [CHW -> HWC (OpenCL)](#chw-to-hwc-conversion-opencl)
+  - [HWC -> CHW Conversion](#hwc-to-chw-conversion)
+  - [CHW -> HWC Conversion](#chw-to-hwc-conversion)
   - [Example](#example)
 - [Validation](#validation)
 - [Benchmark Performance Timing Results](#benchmark-performance-timing-results)
@@ -115,9 +86,9 @@ The conversion between HWC (Height-Width-Channel) and CHW (Channel-Height-Width)
 
 ## Features
 - **High-Performance**: Utilizes C++ Thread / OpenMP / Intel oneTBB for parallel processing. Make full use of CPU multi-core features.
-- **GPU Optimization**: Fully leverages NVIDIA CUDA and AMD ROCm technologies to harness the computational power of GPUs, accelerating performance for intensive workloads.
+- **GPU Optimization**: Fully leverages NVIDIA CUDA, AMD ROCm, Vulkan and OpenCL to harness the computational power of GPUs, accelerating performance for intensive workloads.
 - **Header-Only**: Include **ONLY** a single header file. Easy to integrate into your C/C++ project. [example](#example).
-- **Flexible**: Supports scaling, clamping, and normalization of image data, any data type.
+- **Flexible**: Supports scaling, clamping, and normalization of image data, any data type. The CPU and all GPU backends share one template API (`HasAlpha` / `NeedClamp` / `NeedNormalizedMeanStds`).
 - **Lightweight & SDK-Free**: No dependency on any external SDKs like CUDA SDK or HIP SDK. The project requires no additional header files or static library linkage, making it clean and easy to deploy.
 
 ## Installation
@@ -160,81 +131,37 @@ Intel oneTBB (Intel® oneAPI Threading Building Blocks) is a simplify parallelis
     Simply include the header file `FastChwHwcConverter.hpp` in your project. Before include, you need to add a macro `#define USE_TBB 1`.
 
 
-### for GPU (CUDA or ROCm)
+### for GPU (CUDA / ROCm / Vulkan / OpenCL)
 
-[NVIDIA CUDA Official Website](https://developer.nvidia.com/cuda-toolkit)
+All GPU backends are SDK-free at build time, the CMake switches only control which benchmark targets are generated:
 
-[AMD ROCm Official Website](https://www.amd.com/en/products/software/rocm.html)
  * Option 1:
 
     ```shell
-    cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DUSE_OPENMP=OFF -DUSE_TBB=OFF -DBUILD_BENCHMARK=ON -DBUILD_CUDA_BENCHMARK=ON -DBUILD_ROCM_BENCHMARK=ON -DBUILD_EXAMPLE=ON -DBUILD_EXAMPLE_OPENCV=ON
+    cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_CUDA_BENCHMARK=ON -DBUILD_ROCM_BENCHMARK=ON -DBUILD_VULKAN_BENCHMARK=ON -DBUILD_OPENCL_BENCHMARK=ON
 
     cmake --build build --config Release
     ```
 
+    The Vulkan benchmark target is only generated when the Vulkan SDK is found by `find_package(Vulkan)` (set `Vulkan_INCLUDE_DIR` / `Vulkan_LIBRARY` or the `VULKAN_SDK` environment variable if it is not detected automatically). If the SDK is not found, the Vulkan target is skipped.
+
  * Option 2:
 
-    Simply include the header file `FastChwHwcConverterCuda.hpp` or `FastChwHwcConverterRocm.hpp` in your project:
+    Simply include the header file of the backend you need in your project:
 
     ```cpp
     #include "FastChwHwcConverterCuda.hpp"
-    ```
-
-    ```cpp
     #include "FastChwHwcConverterROCm.hpp"
-    ```
-
-Usually you also need to copy the `nvrtc64_***_0.dll` `nvrtc-builtins64_***` (for Windows CUDA) or `hiprtc****.dll` `hiprtc-builtins****.dll` `amd_comgr_*.dll` `amd_comgr****.dll` (for Windows ROCm)  or `libnvrtc.so` (for Linux CUDA) or `libhiprtc.so` (for Linux ROCm) file in the CUDA/ROCm Runtime SDK to the executable program directory, or set CUDA/ROCm SDK HOME as a system environment variable.
-
-In addition, you need to download and install the latest version of the driver from the [NVIDIA drivers website](https://www.nvidia.com/Download/index.aspx) or [AMD drivers website](https://www.amd.com/en/support). Because this project will dynamically load driver file: `nvcuda.dll` (for Windows CUDA) or `amdhip64_6.dll` (for Windows ROCm) or `libcuda.so` (for Linux CUDA) or `libamdhip64.so` (for Linux ROCm).
-
-### for GPU (Vulkan)
-
-[Vulkan SDK Official Website](https://vulkan.lunarg.com/sdk/home)
-
- * Option 1:
-
-    ```shell
-    cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_VULKAN_BENCHMARK=ON
-
-    cmake --build build --config Release
-    ```
-
-   The Vulkan benchmark target is only generated when the Vulkan SDK is found by `find_package(Vulkan)` (set `Vulkan_INCLUDE_DIR` / `Vulkan_LIBRARY` or the `VULKAN_SDK` environment variable if it is not detected automatically). If the SDK is not found, the Vulkan target is skipped.
-
- * Option 2:
-
-    Simply include the header file `FastChwHwcConverterVulkan.hpp` in your project:
-
-    ```cpp
     #include "FastChwHwcConverterVulkan.hpp"
-    ```
-
-At runtime the backend loads `vulkan-1.dll` / `libvulkan.so.1` (or `libMoltenVK.dylib` on macOS) and the `glslang` shared library (searched next to the executable, in `$VULKAN_SDK/Bin` on Windows or `$VULKAN_SDK/lib` on Linux/macOS, then in the system paths) to compile the GLSL compute shaders into SPIR-V. The functions support passing in Vulkan buffer (device memory) and host memory parameters.
-
-### for GPU (OpenCL)
-
- * Option 1:
-
-    ```shell
-    cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_OPENCL_BENCHMARK=ON
-
-    cmake --build build --config Release
-    ```
-
-   The OpenCL benchmark target needs no OpenCL SDK or header files at build time, the `BUILD_OPENCL_BENCHMARK` switch only controls whether the target is generated.
-
- * Option 2:
-
-    Simply include the header file `FastChwHwcConverterOpenCL.hpp` in your project:
-
-    ```cpp
     #include "FastChwHwcConverterOpenCL.hpp"
     ```
 
-At runtime the backend loads the system OpenCL ICD loader (`OpenCL.dll` / `libOpenCL.so.1` / `OpenCL.framework` on macOS) and compiles the embedded OpenCL C kernels for the selected device. The functions support passing in OpenCL memory (cl_mem device buffer) and host memory parameters.
+Runtime requirements per backend:
 
+ * **CUDA** ([NVIDIA CUDA Official Website](https://developer.nvidia.com/cuda-toolkit)): usually you also need to copy the `nvrtc64_***_0.dll` `nvrtc-builtins64_***` (for Windows) or `libnvrtc.so` (for Linux) file in the CUDA Runtime SDK to the executable program directory, or set the CUDA SDK HOME as a system environment variable. In addition, you need to download and install the latest version of the driver from the [NVIDIA drivers website](https://www.nvidia.com/Download/index.aspx), because this project will dynamically load the driver file: `nvcuda.dll` (for Windows) or `libcuda.so` (for Linux).
+ * **ROCm** ([AMD ROCm Official Website](https://www.amd.com/en/products/software/rocm.html)): usually you also need to copy the `hiprtc****.dll` `hiprtc-builtins****.dll` `amd_comgr_*.dll` (for Windows) or `libhiprtc.so` (for Linux) file in the ROCm Runtime SDK to the executable program directory, or set the ROCm SDK HOME as a system environment variable. In addition, you need to download and install the latest version of the driver from the [AMD drivers website](https://www.amd.com/en/support), because this project will dynamically load the driver file: `amdhip64_6.dll` (for Windows) or `libamdhip64.so` (for Linux).
+ * **Vulkan** ([Vulkan SDK Official Website](https://vulkan.lunarg.com/sdk/home)): at runtime the backend loads `vulkan-1.dll` / `libvulkan.so.1` (or `libMoltenVK.dylib` on macOS) and the `glslang` shared library (searched next to the executable, in `$VULKAN_SDK/Bin` on Windows or `$VULKAN_SDK/lib` on Linux/macOS, then in the system paths) to compile the GLSL compute shaders into SPIR-V.
+ * **OpenCL**: no SDK or header files are required at build time (the `BUILD_OPENCL_BENCHMARK` switch only controls whether the target is generated); at runtime the backend loads the system OpenCL ICD loader (`OpenCL.dll` / `libOpenCL.so.1` / `OpenCL.framework` on macOS) and compiles the embedded OpenCL C kernels for the selected device.
 ## Requirements
 * C++17 or later
 * OpenMP support (optional, set USE_OPENMP to ON for high performance)
@@ -248,8 +175,19 @@ At runtime the backend loads the system OpenCL ICD loader (`OpenCL.dll` / `libOp
 
 ## API Documents
 
-### HWC to CHW Conversion (CPU)
-The `whyb::cpu::hwc2chw()` function converts image data from HWC format to CHW format.
+All backends (CPU and GPU) share one template API. The GPU backends `whyb::nvidia::` (CUDA) / `whyb::amd::` (ROCm) / `whyb::vulkan::` / `whyb::opencl::` expose the same templates as `whyb::cpu::`, plus device-memory overloads, and compute the exact same transform:
+
+    value = HasAlpha ? src * alpha : src
+    value = NeedNormalizedMeanStds ? (value - mean[min(channel, 2)]) / stds[min(channel, 2)] : value
+    value = NeedClamp ? clamp(value, min_v, max_v) : value
+    dst = (Dtype)value
+
+The GPU kernels cover the `uint8_t` and `float` element types; any other `Stype`/`Dtype` combination keeps full CPU behavior through the automatic fallback.
+
+### HWC to CHW Conversion
+The `hwc2chw()` function converts image data from HWC format to CHW format.
+
+Host memory overload (`whyb::cpu::` / `whyb::nvidia::` / `whyb::amd::` / `whyb::vulkan::` / `whyb::opencl::`):
 ```cpp
 template <typename Stype, typename Dtype,
             bool HasAlpha = false,
@@ -258,270 +196,112 @@ template <typename Stype, typename Dtype,
 void hwc2chw(
     const size_t h, const size_t w, const size_t c,
     const Stype* src, Dtype* dst,
-    const Dtype alpha = 1, 
+    const Dtype alpha = 1,
     const Dtype min_v = 0.0, const Dtype max_v = 1.0,
     const std::array<float, 3> mean = { 0.485, 0.456, 0.406 },
     const std::array<float, 3> stds = { 0.229, 0.224, 0.225 }
 );
 ```
 
+Device memory overload (GPU backends only, `Stype`/`Dtype` must be given explicitly):
+```cpp
+template <typename Stype, typename Dtype,
+            bool HasAlpha = false,
+            bool NeedClamp = false,
+            bool NeedNormalizedMeanStds = false>
+void hwc2chw(
+    const size_t h, const size_t w, const size_t c,
+    const CUdeviceptr src, const CUdeviceptr dst,
+    const Dtype alpha = 1,
+    const Dtype min_v = 0.0, const Dtype max_v = 1.0,
+    const std::array<float, 3> mean = { 0.485, 0.456, 0.406 },
+    const std::array<float, 3> stds = { 0.229, 0.224, 0.225 }
+);
+```
+
+The device handle type depends on the backend: `CUdeviceptr` for `whyb::nvidia::`, `hipDeviceptr_t` for `whyb::amd::`, `VkBuffer` for `whyb::vulkan::`, `cl_mem` for `whyb::opencl::`.
+
+Template parameters:
+
+* `Stype`: Source data type (any type on the CPU, `uint8_t` / `float` are GPU-accelerated).
+* `Dtype`: Destination data type (any type on the CPU, `uint8_t` / `float` are GPU-accelerated).
+* `HasAlpha`: input alpha is requires participation in calculations.
+* `NeedClamp`: input min_v and max_v are requires participation in calculations.
+* `NeedNormalizedMeanStds`: input mean and stds are requires participation in calculations.
+
 Parameters:
 
 * `h`: Height of the image.
 * `w`: Width of the image.
 * `c`: Number of channels.
-* `src`: Pointer to the source data in HWC format.
-* `dst`: Pointer to the destination data in CHW format.
+* `src`: Source data in HWC format (host memory or device memory).
+* `dst`: Destination data in CHW format (host memory or device memory).
 * `alpha`: Scaling factor (default is 1).
 * `min_v`: Minimum value for clamping (default is 0.0).
 * `max_v`: Maximum value for clamping (default is 1.0).
 * `mean`: Array of mean values for normalization (default is {0.485, 0.456, 0.406}).
 * `stds`: Array of standard deviation values for normalization (default is {0.229, 0.224, 0.225}).
 
-### CHW to HWC Conversion (CPU)
-The `whyb::cpu::chw2hwc()` function converts image data from CHW format to HWC format.
+Normalization parameters are RGB-only. A fourth channel reuses the final parameter set to avoid reading outside the arrays.
 
+### CHW to HWC Conversion
+The `chw2hwc()` function converts image data from CHW format to HWC format.
+
+Host memory overload (`whyb::cpu::` / `whyb::nvidia::` / `whyb::amd::` / `whyb::vulkan::` / `whyb::opencl::`):
 ```cpp
 template <typename Stype, typename Dtype,
             bool HasAlpha = false,
             bool NeedClamp = false>
 void chw2hwc(
     const size_t c, const size_t h, const size_t w,
-    const Stype* src, Dtype* dst, 
-    const Dtype alpha = 1, 
+    const Stype* src, Dtype* dst,
+    const Dtype alpha = 1,
     const Dtype min_v = 0, const Dtype max_v = 255
 );
 ```
+
+Device memory overload (GPU backends only, `Stype`/`Dtype` must be given explicitly):
+```cpp
+template <typename Stype, typename Dtype,
+            bool HasAlpha = false,
+            bool NeedClamp = false>
+void chw2hwc(
+    const size_t c, const size_t h, const size_t w,
+    const CUdeviceptr src, const CUdeviceptr dst,
+    const Dtype alpha = 1,
+    const Dtype min_v = 0, const Dtype max_v = 255
+);
+```
+
+The device handle type depends on the backend: `CUdeviceptr` for `whyb::nvidia::`, `hipDeviceptr_t` for `whyb::amd::`, `VkBuffer` for `whyb::vulkan::`, `cl_mem` for `whyb::opencl::`.
+
+Template parameters:
+
+* `Stype`: Source data type (any type on the CPU, `uint8_t` / `float` are GPU-accelerated).
+* `Dtype`: Destination data type (any type on the CPU, `uint8_t` / `float` are GPU-accelerated).
+* `HasAlpha`: input alpha is requires participation in calculations.
+* `NeedClamp`: input min_v and max_v are requires participation in calculations.
+
 Parameters:
 
 * `c`: Number of channels.
 * `h`: Height of the image.
 * `w`: Width of the image.
-* `src`: Pointer to the source data in CHW format.
-* `dst`: Pointer to the destination data in HWC format.
+* `src`: Source data in CHW format (host memory or device memory).
+* `dst`: Destination data in HWC format (host memory or device memory).
 * `alpha`: Scaling factor (default is 1).
 * `min_v`: Minimum value for clamping (default is 0).
 * `max_v`: Maximum value for clamping (default is 255).
 
-
-### HWC to CHW Conversion (CUDA)
-The `whyb::nvidia::hwc2chw()` function converts image data from HWC format to CHW format.
-```cpp
-void hwc2chw(
-    const size_t h, const size_t w, const size_t c,
-    const uint8_t* src, float* dst,
-    const float alpha = 1.f/255.f
-);
-```
-
-Parameters:
-
-* `h`: Height of the image.
-* `w`: Width of the image.
-* `c`: Number of channels.
-* `src`: Pointer to the source data(host memory) in HWC format.
-* `dst`: Pointer to the destination data(host memory) in CHW format.
-* `alpha`: Scaling factor (default is 1).
-
-**Note**: Please call whyb::nvidia::init() before the first use, and call whyb::nvidia::release() to release it after confirming that it will not be used anymore.
-
-### CHW to HWC Conversion (CUDA)
-The `whyb::nvidia::chw2hwc()` function converts image data from CHW format to HWC format.
-
-```cpp
-void chw2hwc(
-    const size_t c, const size_t h, const size_t w,
-    const float* src, uint8_t* dst,
-    const uint8_t alpha = 255.0f
-);
-```
-Parameters:
-
-* `c`: Number of channels.
-* `h`: Height of the image.
-* `w`: Width of the image.
-* `src`: Pointer to the source data(host memory) in CHW format.
-* `dst`: Pointer to the destination data(host memory) in HWC format.
-* `alpha`: Scaling factor (default is 1).
-
-**Note**: Please call whyb::nvidia::init() before the first use, and call whyb::nvidia::release() to release it after confirming that it will not be used anymore.
-
-### HWC to CHW Conversion (ROCm)
-The `whyb::amd::hwc2chw()` function converts image data from HWC format to CHW format.
-```cpp
-void hwc2chw(
-    const size_t h, const size_t w, const size_t c,
-    const uint8_t* src, float* dst,
-    const float alpha = 1.f/255.f
-);
-```
-
-Parameters:
-
-* `h`: Height of the image.
-* `w`: Width of the image.
-* `c`: Number of channels.
-* `src`: Pointer to the source data(host memory) in HWC format.
-* `dst`: Pointer to the destination data(host memory) in CHW format.
-* `alpha`: Scaling factor (default is 1).
-
-**Note**: Please call whyb::amd::init() before the first use, and call whyb::amd::release() to release it after confirming that it will not be used anymore.
-
-### CHW to HWC Conversion (ROCm)
-The `whyb::amd::chw2hwc()` function converts image data from CHW format to HWC format.
-
-```cpp
-void chw2hwc(
-    const size_t c, const size_t h, const size_t w,
-    const float* src, uint8_t* dst,
-    const uint8_t alpha = 255.0f
-);
-```
-Parameters:
-
-* `c`: Number of channels.
-* `h`: Height of the image.
-* `w`: Width of the image.
-* `src`: Pointer to the source data(host memory) in CHW format.
-* `dst`: Pointer to the destination data(host memory) in HWC format.
-* `alpha`: Scaling factor (default is 1).
-
-**Note**: Please call whyb::amd::init() before the first use, and call whyb::amd::release() to release it after confirming that it will not be used anymore.
-
-### HWC to CHW Conversion (Vulkan)
-The `whyb::vulkan::hwc2chw()` function converts image data from HWC format to CHW format.
-
-Host memory overload:
-```cpp
-void hwc2chw(
-    const size_t h, const size_t w, const size_t c,
-    const uint8_t* src, float* dst,
-    const float alpha = 1.f/255.f
-);
-```
-
-Device memory overload:
-```cpp
-void hwc2chw(
-    const size_t h, const size_t w, const size_t c,
-    const VkBuffer src, const VkBuffer dst,
-    const float alpha = 1.f/255.f
-);
-```
-
-Parameters:
-
-* `h`: Height of the image.
-* `w`: Width of the image.
-* `c`: Number of channels.
-* `src`: Source data in HWC format (host memory or Vulkan device buffer).
-* `dst`: Destination data in CHW format (host memory or Vulkan device buffer).
-* `alpha`: Scaling factor (default is 1.f/255.f).
-
-**Note**: Please call whyb::vulkan::init() before the first use, and call whyb::vulkan::release() to release it after confirming that it will not be used anymore. The host memory overload falls back to the CPU implementation automatically if the Vulkan backend is not initialized. Device buffers can be allocated with whyb::vulkan::createDeviceBuffer() and must be released with whyb::vulkan::destroyDeviceBuffer().
-
-### CHW to HWC Conversion (Vulkan)
-The `whyb::vulkan::chw2hwc()` function converts image data from CHW format to HWC format.
-
-Host memory overload:
-```cpp
-void chw2hwc(
-    const size_t c, const size_t h, const size_t w,
-    const float* src, uint8_t* dst,
-    const uint8_t alpha = 255.0f
-);
-```
-
-Device memory overload:
-```cpp
-void chw2hwc(
-    const size_t c, const size_t h, const size_t w,
-    const VkBuffer src, const VkBuffer dst,
-    const uint8_t alpha = 255.0f
-);
-```
-
-Parameters:
-
-* `c`: Number of channels.
-* `h`: Height of the image.
-* `w`: Width of the image.
-* `src`: Source data in CHW format (host memory or Vulkan device buffer).
-* `dst`: Destination data in HWC format (host memory or Vulkan device buffer).
-* `alpha`: Scaling factor (default is 255.0f).
-
-**Note**: Please call whyb::vulkan::init() before the first use, and call whyb::vulkan::release() to release it after confirming that it will not be used anymore. The host memory overload falls back to the CPU implementation automatically if the Vulkan backend is not initialized.
-
-### HWC to CHW Conversion (OpenCL)
-The `whyb::opencl::hwc2chw()` function converts image data from HWC format to CHW format.
-
-Host memory overload:
-```cpp
-void hwc2chw(
-    const size_t h, const size_t w, const size_t c,
-    const uint8_t* src, float* dst,
-    const float alpha = 1.f/255.f
-);
-```
-
-Device memory overload:
-```cpp
-void hwc2chw(
-    const size_t h, const size_t w, const size_t c,
-    const cl_mem src, const cl_mem dst,
-    const float alpha = 1.f/255.f
-);
-```
-
-Parameters:
-
-* `h`: Height of the image.
-* `w`: Width of the image.
-* `c`: Number of channels.
-* `src`: Source data in HWC format (host memory or OpenCL device buffer).
-* `dst`: Destination data in CHW format (host memory or OpenCL device buffer).
-* `alpha`: Scaling factor (default is 1.f/255.f).
-
-**Note**: Please call whyb::opencl::init() before the first use, and call whyb::opencl::release() to release it after confirming that it will not be used anymore. The host memory overload falls back to the CPU implementation automatically if the OpenCL backend is not initialized. Device buffers can be allocated with whyb::opencl::createDeviceBuffer() and must be released with whyb::opencl::destroyDeviceBuffer().
-
-### CHW to HWC Conversion (OpenCL)
-The `whyb::opencl::chw2hwc()` function converts image data from CHW format to HWC format.
-
-Host memory overload:
-```cpp
-void chw2hwc(
-    const size_t c, const size_t h, const size_t w,
-    const float* src, uint8_t* dst,
-    const uint8_t alpha = 255.0f
-);
-```
-
-Device memory overload:
-```cpp
-void chw2hwc(
-    const size_t c, const size_t h, const size_t w,
-    const cl_mem src, const cl_mem dst,
-    const uint8_t alpha = 255.0f
-);
-```
-
-Parameters:
-
-* `c`: Number of channels.
-* `h`: Height of the image.
-* `w`: Width of the image.
-* `src`: Source data in CHW format (host memory or OpenCL device buffer).
-* `dst`: Destination data in HWC format (host memory or OpenCL device buffer).
-* `alpha`: Scaling factor (default is 255.0f).
-
-**Note**: Please call whyb::opencl::init() before the first use, and call whyb::opencl::release() to release it after confirming that it will not be used anymore. The host memory overload falls back to the CPU implementation automatically if the OpenCL backend is not initialized.
+**Note (GPU backends)**: Please call `whyb::nvidia::init()` / `whyb::amd::init()` / `whyb::vulkan::init()` / `whyb::opencl::init()` before the first use, and call `release()` to release it after confirming that it will not be used anymore. The host memory overload falls back to the CPU implementation automatically if the GPU backend is not available. Device buffers can be allocated with `createDeviceBuffer()` and must be released with `destroyDeviceBuffer()` (the Vulkan and OpenCL backends also provide `uploadToDeviceBuffer()` / `downloadFromDeviceBuffer()`).
 
 ### Example
-This example code(**test/example.cpp**) demonstrates how to use the CPU, NVIDIA CUDA, AMD ROCm and Vulkan backends to convert image data from HWC format to CHW format, and then back to HWC format after AI inference.
+This example code(**test/example.cpp**) demonstrates how to use the CPU, NVIDIA CUDA, AMD ROCm, Vulkan and OpenCL backends to convert image data from HWC format to CHW format, and then back to HWC format after AI inference. All backends use the same template API, only the class name differs.
 
 ```cpp
 #include "FastChwHwcConverter.hpp"
 #include "FastChwHwcConverterCuda.hpp"
+#include "FastChwHwcConverterOpenCL.hpp"
 #include "FastChwHwcConverterROCm.hpp"
 #include "FastChwHwcConverterVulkan.hpp"
 #include <vector>
@@ -574,95 +354,28 @@ void cuda_example()
     // step 2. Load image data to src_uint8(8U3C)
 
     // step 3. Convert HWC(Height, Width, Channels) to CHW(Channels, Height, Width)
-    whyb::nvidia::hwc2chw(h, w, c, (uint8_t*)src_uint8.data(), (float*)src_float.data(), 1.f/255.f);
+    whyb::nvidia::hwc2chw<uint8_t, float, true>(h, w, c, (uint8_t*)src_uint8.data(), (float*)src_float.data(), 1.f/255.f);
 
     // step 4. Do AI inference
     // input: src_float ==infer==> output: out_float
 
     // step 5. Convert CHW(Channels, Height, Width) to HWC(Height, Width, Channels)
-    whyb::nvidia::chw2hwc(c, h, w, (float*)out_float.data(), (uint8_t*)out_uint8.data(), 255.f);
+    whyb::nvidia::chw2hwc<float, uint8_t, true>(c, h, w, (float*)out_float.data(), (uint8_t*)out_uint8.data(), 255.f);
 
     whyb::nvidia::release();
     std::cout << "cuda example done" << std::endl;
 }
-
-void rocm_example()
-{
-    if (!whyb::amd::init()) { return; }
-    const size_t c = 3;
-    const size_t w = 1920;
-    const size_t h = 1080;
-
-    // step 1. Defining input and output 
-    const size_t pixel_size = h * w * c;
-    std::vector<uint8_t> src_uint8(pixel_size); // Source data(hwc)
-    std::vector<float> src_float(pixel_size); // Source data(chw)
-
-    std::vector<float> out_float(pixel_size); // Inference output data(chw)
-    std::vector<uint8_t> out_uint8(pixel_size); // Inference output data(hwc)
-
-    // step 2. Load image data to src_uint8(8U3C)
-
-    // step 3. Convert HWC(Height, Width, Channels) to CHW(Channels, Height, Width)
-    whyb::amd::hwc2chw(h, w, c, (uint8_t*)src_uint8.data(), (float*)src_float.data(), 1.f / 255.f);
-
-    // step 4. Do AI inference
-    // input: src_float ==infer==> output: out_float
-
-    // step 5. Convert CHW(Channels, Height, Width) to HWC(Height, Width, Channels)
-    whyb::amd::chw2hwc(c, h, w, (float*)out_float.data(), (uint8_t*)out_uint8.data(), 255.f);
-
-    whyb::amd::release();
-    std::cout << "rocm example done" << std::endl;
-}
-
-
-void vulkan_example()
-{
-    if (!whyb::vulkan::init()) { return; }
-    const size_t c = 3;
-    const size_t w = 1920;
-    const size_t h = 1080;
-
-    // step 1. Defining input and output
-    const size_t pixel_size = h * w * c;
-    std::vector<uint8_t> src_uint8(pixel_size); // Source data(hwc)
-    std::vector<float> src_float(pixel_size); // Source data(chw)
-
-    std::vector<float> out_float(pixel_size); // Inference output data(chw)
-    std::vector<uint8_t> out_uint8(pixel_size); // Inference output data(hwc)
-
-    // step 2. Load image data to src_uint8(8U3C)
-
-    // step 3. Convert HWC(Height, Width, Channels) to CHW(Channels, Height, Width)
-    whyb::vulkan::hwc2chw(h, w, c, (uint8_t*)src_uint8.data(), (float*)src_float.data(), 1.f / 255.f);
-
-    // step 4. Do AI inference
-    // input: src_float ==infer==> output: out_float
-
-    // step 5. Convert CHW(Channels, Height, Width) to HWC(Height, Width, Channels)
-    whyb::vulkan::chw2hwc(c, h, w, (float*)out_float.data(), (uint8_t*)out_uint8.data(), 255.f);
-
-    whyb::vulkan::release();
-    std::cout << "vulkan example done" << std::endl;
-}
-
-int main() {
-    cpu_example();
-    cuda_example();
-    rocm_example();
-    vulkan_example();
-    return 0;
-}
 ```
-If you are using OpenCV's `cv::Mat`, Please refer to the **test/example-opencv.cpp** file.
 
+The `rocm_example()` / `vulkan_example()` / `opencl_example()` functions are identical to `cuda_example()` except for the class name (`whyb::amd::` / `whyb::vulkan::` / `whyb::opencl::`), see the full code in **test/example.cpp**.
+
+If you are using OpenCV's `cv::Mat`, Please refer to the **test/example-opencv.cpp** file.
 ## Validation
 
 test/validate.cpp checks correctness with randomized inputs (no third-party test framework is used):
 
 * The CPU backend is compared element-by-element against a naive scalar reference implementation for every HasAlpha / NeedClamp / NeedNormalizedMeanStds template branch, with channels 1, 3 and 4 (normalization is only defined for up to 3 channels).
-* The CUDA / ROCm / Vulkan / OpenCL backends, when a device is available, are compared against the CPU backend on the same random data. The GPU backends implement the fixed transform `hwc2chw: dst = src * alpha` (CHW output) and `chw2hwc: dst = clamp(src * alpha, 0, 255)` (HWC output).
+* The CUDA / ROCm / Vulkan / OpenCL backends, when a device is available, are compared against the CPU backend on the same random data. The comparison sweeps the full `Stype` x `Dtype` x `HasAlpha` x `NeedClamp` (x `NeedNormalizedMeanStds`) permutation matrix over the basic data types (`bool`, `int8_t`, `uint8_t`, `int16_t`, `uint16_t`, `int32_t`, `uint32_t`, `int64_t`, `uint64_t`, `float`, `double`), plus non-default `alpha` / `min_v` / `max_v` / `mean` / `stds` values. The GPU kernels accelerate the `uint8_t`/`float` element types and route every other combination through the automatic CPU fallback, so the matrix validates both the GPU math and the type dispatch.
 
 Build and run it with (the target is enabled by default):
 
@@ -678,7 +391,7 @@ On Windows the binary is `build\Release\validate.exe`. The program prints a summ
 
 ## Benchmark Performance Timing Results
 
-The table below shows the benchmark performance timing for different image dimensions, channels, and processing configurations. The GPU backends (CUDA / ROCm / Vulkan) are measured on device memory, while the CPU columns are measured on host memory.
+The table below shows the benchmark performance timing for different image dimensions, channels, and processing configurations. The GPU columns are measured on device memory, while the CPU columns are measured on host memory.
 
 All benchmark programs fill their inputs with randomized data, run warm-up iterations, and report the minimum average over several repetitions (see `test/benchmark.cpp` and `test/*_benchmark.cpp`), so the results are not biased by all-zero buffers or one-off system noise.
 

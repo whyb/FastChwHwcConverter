@@ -55,11 +55,11 @@ int main() {
             cuMemcpyHtoD(out_float, host_src_f32.data(), pixel_size * sizeof(float));
 
             const double hwc2chw_us = whyb_test::measure_min([&]() {
-                whyb::nvidia::hwc2chw(height, width, channel, src_uint8, src_float, 1.f / 255.f);
+                whyb::nvidia::hwc2chw<uint8_t, float, true>(height, width, channel, src_uint8, src_float, 1.f / 255.f);
             }, WARMUP_COUNT, REPEAT_COUNT, TEST_COUNT);
 
             const double chw2hwc_us = whyb_test::measure_min([&]() {
-                whyb::nvidia::chw2hwc(channel, height, width, out_float, out_uint8, 255.f);
+                whyb::nvidia::chw2hwc<float, uint8_t, true, true>(channel, height, width, out_float, out_uint8, 255.f);
             }, WARMUP_COUNT, REPEAT_COUNT, TEST_COUNT);
 
             cuMemFree(src_uint8);

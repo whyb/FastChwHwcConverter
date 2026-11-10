@@ -118,6 +118,11 @@ if(BUILD_VALIDATE)
         test/benchmark_util.hpp test/validate.cpp)
     target_include_directories(validate PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${TBB_INCLUDE_DIRS})
     target_compile_options(validate PRIVATE ${OpenMP_FLAGS})
+    # The full Stype x Dtype x flag permutation matrix instantiates many
+    # templates; MSVC needs /bigobj to stay below the COFF section limit.
+    if(MSVC)
+        target_compile_options(validate PRIVATE /bigobj)
+    endif()
     target_link_libraries(validate PRIVATE ${TBB_LIBS})
 endif()
 

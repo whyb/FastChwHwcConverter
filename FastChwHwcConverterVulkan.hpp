@@ -819,45 +819,108 @@ inline vkUnmapMemory_t vkUnmapMemory = nullptr;
 // ---------------------------------------------------------------------------
 // GLSL compute shader sources (compiled to SPIR-V at runtime with glslang).
 //
-// hwc2chw: HWC (uint8) -> CHW (float). The byte source is read as uint32
-// words and the requested byte is extracted with bit operations, so no
-// 8-bit integer storage feature is required.
+// The kernels mirror the CPU implementation exactly:
+//   value = has_alpha ? src * alpha : src
+//   value = need_norm ? (value - mean[min(ch,2)]) / stds[min(ch,2)] : value
+//   value = need_clamp ? clamp(value, min_v, max_v) : value
+//   dst = (Dtype)value
 //
-// chw2hwc: CHW (float) -> HWC (uint8). Every output uint32 word is owned by
-// exactly one thread, which packs its four bytes itself. This keeps the byte
-// writes race-free without 8-bit storage support.
+// The push-constant flags bits select the element types and the transform
+// branches:
+//   bit0: src_is_float, bit1: dst_is_float, bit2: has_alpha,
+//   bit3: need_clamp, bit4: need_norm
+//
+// Buffers are accessed as uint32 words (float values through uintBitsToFloat,
+// uint8 values through bit extraction / packing), so no 8-bit integer storage
+// feature is required. When the destination is float one thread owns one
+// pixel; when it is uint8 one thread packs one output word (four bytes), which
+// keeps the byte writes race-free without 8-bit storage support.
 // ---------------------------------------------------------------------------
 static const char* vulkanHwc2ChwSource = R"(#version 450
 layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
 
 layout(std430, binding = 0) readonly buffer SrcBuffer { uint src[]; };
-layout(std430, binding = 1) writeonly buffer DstBuffer { float dst[]; };
+layout(std430, binding = 1) writeonly buffer DstBuffer { uint dst[]; };
 
 layout(push_constant) uniform PushConstants
 {
     uint h;
     uint w;
     uint c;
+    uint flags;
     float alpha;
+    float min_v;
+    float max_v;
+    float mean[3];
+    float stds[3];
 } pc;
+
+float load_src(const uint element)
+{
+    if ((pc.flags & 1u) != 0u)
+    {
+        return uintBitsToFloat(src[element]);
+    }
+    const uint word = src[element >> 2u];
+    return float((word >> ((element & 3u) << 3u)) & 0xFFu);
+}
+
+float transform_value(float value, const uint ch)
+{
+    if ((pc.flags & 4u) != 0u)
+    {
+        value *= pc.alpha;
+    }
+    if ((pc.flags & 16u) != 0u)
+    {
+        const uint mi = (ch < 2u) ? ch : 2u;
+        value = (value - pc.mean[mi]) / pc.stds[mi];
+    }
+    if ((pc.flags & 8u) != 0u)
+    {
+        value = (value < pc.min_v) ? pc.min_v : ((pc.max_v < value) ? pc.max_v : value);
+    }
+    return value;
+}
 
 void main()
 {
-    const uint pixel = gl_GlobalInvocationID.x;
-    const uint pixel_count = pc.h * pc.w;
-    if (pixel >= pixel_count)
+    const uint hw = pc.h * pc.w;
+    const uint total_elements = hw * pc.c;
+    if ((pc.flags & 2u) != 0u)
     {
-        return;
+        // float destination: one thread owns one pixel and writes c channels
+        const uint pixel = gl_GlobalInvocationID.x;
+        if (pixel >= hw)
+        {
+            return;
+        }
+        for (uint ch = 0u; ch < pc.c; ++ch)
+        {
+            const float value = transform_value(load_src(pixel * pc.c + ch), ch);
+            dst[pixel + ch * hw] = floatBitsToUint(value);
+        }
     }
-
-    const uint src_base = pixel * pc.c;
-    const uint dst_base = pixel;
-    for (uint ch = 0u; ch < pc.c; ++ch)
+    else
     {
-        const uint byte_index = src_base + ch;
-        const uint word = src[byte_index >> 2u];
-        const uint byte_value = (word >> ((byte_index & 3u) << 3u)) & 0xFFu;
-        dst[dst_base + ch * pixel_count] = float(byte_value) * pc.alpha;
+        // uint8 destination: one thread packs one output word (CHW element order)
+        const uint total_words = (total_elements + 3u) >> 2u;
+        const uint word_index = gl_GlobalInvocationID.x;
+        if (word_index >= total_words)
+        {
+            return;
+        }
+        const uint byte_start = word_index << 2u;
+        const uint byte_end = min(byte_start + 4u, total_elements);
+        uint packed = 0u;
+        for (uint b = byte_start; b < byte_end; ++b)
+        {
+            const uint ch = b / hw;
+            const uint pixel = b - ch * hw;
+            const float value = transform_value(load_src(pixel * pc.c + ch), ch);
+            packed |= uint(value) << ((b & 3u) << 3u);
+        }
+        dst[word_index] = packed;
     }
 }
 )";
@@ -865,39 +928,84 @@ void main()
 static const char* vulkanChw2HwcSource = R"(#version 450
 layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
 
-layout(std430, binding = 0) readonly buffer SrcBuffer { float src[]; };
+layout(std430, binding = 0) readonly buffer SrcBuffer { uint src[]; };
 layout(std430, binding = 1) writeonly buffer DstBuffer { uint dst[]; };
 
 layout(push_constant) uniform PushConstants
 {
-    uint c;
     uint h;
     uint w;
+    uint c;
+    uint flags;
     float alpha;
+    float min_v;
+    float max_v;
+    float mean[3];
+    float stds[3];
 } pc;
+
+float load_src(const uint element)
+{
+    if ((pc.flags & 1u) != 0u)
+    {
+        return uintBitsToFloat(src[element]);
+    }
+    const uint word = src[element >> 2u];
+    return float((word >> ((element & 3u) << 3u)) & 0xFFu);
+}
+
+float transform_value(float value, const uint ch)
+{
+    if ((pc.flags & 4u) != 0u)
+    {
+        value *= pc.alpha;
+    }
+    if ((pc.flags & 8u) != 0u)
+    {
+        value = (value < pc.min_v) ? pc.min_v : ((pc.max_v < value) ? pc.max_v : value);
+    }
+    return value;
+}
 
 void main()
 {
-    const uint total_bytes = pc.h * pc.w * pc.c;
-    const uint total_words = (total_bytes + 3u) >> 2u;
-    const uint word_index = gl_GlobalInvocationID.x;
-    if (word_index >= total_words)
+    const uint hw = pc.h * pc.w;
+    const uint total_elements = hw * pc.c;
+    if ((pc.flags & 2u) != 0u)
     {
-        return;
+        // float destination: one thread owns one pixel and writes c channels
+        const uint pixel = gl_GlobalInvocationID.x;
+        if (pixel >= hw)
+        {
+            return;
+        }
+        for (uint ch = 0u; ch < pc.c; ++ch)
+        {
+            const float value = transform_value(load_src(pixel + ch * hw), ch);
+            dst[pixel * pc.c + ch] = floatBitsToUint(value);
+        }
     }
-
-    const uint byte_start = word_index << 2u;
-    const uint byte_end = min(byte_start + 4u, total_bytes);
-    uint packed = 0u;
-    for (uint b = byte_start; b < byte_end; ++b)
+    else
     {
-        const uint pixel = b / pc.c;
-        const uint ch = b - pixel * pc.c;
-        float value = src[pixel + ch * pc.h * pc.w] * pc.alpha;
-        value = clamp(value, 0.0, 255.0);
-        packed |= uint(value) << ((b & 3u) << 3u);
+        // uint8 destination: one thread packs one output word (HWC element order)
+        const uint total_words = (total_elements + 3u) >> 2u;
+        const uint word_index = gl_GlobalInvocationID.x;
+        if (word_index >= total_words)
+        {
+            return;
+        }
+        const uint byte_start = word_index << 2u;
+        const uint byte_end = min(byte_start + 4u, total_elements);
+        uint packed = 0u;
+        for (uint b = byte_start; b < byte_end; ++b)
+        {
+            const uint pixel = b / pc.c;
+            const uint ch = b - pixel * pc.c;
+            const float value = transform_value(load_src(pixel + ch * hw), ch);
+            packed |= uint(value) << ((b & 3u) << 3u);
+        }
+        dst[word_index] = packed;
     }
-    dst[word_index] = packed;
 }
 )";
 
@@ -939,270 +1047,301 @@ enum struct InitVulkanStatusEnum : int {
         /**
         * @brief Converts image data from HWC format to CHW format
         *
+        * @tparam Stype Source data type
+        * @tparam Dtype Destination data type
+        * @tparam HasAlpha input alpha is requires participation in calculations
+        * @tparam NeedClamp input min_v and max_v are requires participation in calculations
+        * @tparam NeedNormalizedMeanStds input mean and stds are requires participation in calculations
         * @param h Height of image
         * @param w Width of image
         * @param c Number of channels
         * @param src Pointer to the source data in HWC format
         * @param dst Pointer to the destination data in CHW format
         * @param alpha Scaling factor
+        * @param min_v Minimum value for clamping
+        * @param max_v Maximum value for clamping
+        * @param mean Array of mean values for normalization
+        * @param stds Array of standard deviation values for normalization
+        *
+        * Normalization parameters are RGB-only.  A fourth channel reuses the
+        * final parameter set to avoid reading outside the arrays.
         */
+        template <typename Stype, typename Dtype,
+                  bool HasAlpha = false,
+                  bool NeedClamp = false,
+                  bool NeedNormalizedMeanStds = false>
         static void hwc2chw(
             const size_t h, const size_t w, const size_t c,
-            const uint8_t* src, float* dst,
-            const float alpha = 1.f / 255.f) {
+            const Stype* src, Dtype* dst,
+            const Dtype alpha = 1,
+            const Dtype min_v = 0.0, const Dtype max_v = 1.0,
+            const std::array<float, 3> mean = { 0.485f, 0.456f, 0.406f },
+            const std::array<float, 3> stds = { 0.229f, 0.224f, 0.225f }) {
             vulkan();
             if (h == 0 || w == 0 || c == 0 || src == nullptr || dst == nullptr) {
                 return;
             }
-            std::lock_guard<std::mutex> lock(VulkanMutex);
-            if (initVulkanStatus.load(std::memory_order_acquire) != InitVulkanStatusEnum::Inited) {
-                // use cpu
-                cpu::hwc2chw<uint8_t, float, true>(h, w, c, src, dst, alpha);
-                return;
+            if constexpr (!isSupportedElementType<Stype, Dtype>()) {
+                // use cpu (the GPU kernels cover uint8_t and float element types)
+                cpu::hwc2chw<Stype, Dtype, HasAlpha, NeedClamp, NeedNormalizedMeanStds>(h, w, c, src, dst, alpha, min_v, max_v, mean, stds); return;
             }
-            // use vulkan
-            const size_t pixel_size = h * w * c;
-            const size_t src_bytes = pixel_size; // uint8_t
-            const size_t src_size = (src_bytes + 3u) & ~size_t(3u);
-            const size_t dst_bytes = pixel_size * sizeof(float); // multiple of 4
+            else {
+                std::lock_guard<std::mutex> lock(VulkanMutex);
+                if (initVulkanStatus.load(std::memory_order_acquire) != InitVulkanStatusEnum::Inited) {
+                    // use cpu
+                    cpu::hwc2chw<Stype, Dtype, HasAlpha, NeedClamp, NeedNormalizedMeanStds>(h, w, c, src, dst, alpha, min_v, max_v, mean, stds);
+                    return;
+                }
+                // use vulkan
+                const size_t pixel_size = h * w * c;
+                const size_t src_bytes = pixel_size * sizeof(Stype);
+                const size_t dst_bytes = pixel_size * sizeof(Dtype);
+                const size_t src_size = (src_bytes + 3u) & ~size_t(3u);
+                const size_t dst_size = (dst_bytes + 3u) & ~size_t(3u);
 
-            VkBuffer dev_src = 0, dev_dst = 0, host_src = 0, host_dst = 0;
-            VkDeviceMemory dev_src_mem = 0, dev_dst_mem = 0, host_src_mem = 0, host_dst_mem = 0;
+                VkBuffer dev_src = 0, dev_dst = 0, host_src = 0, host_dst = 0;
+                VkDeviceMemory dev_src_mem = 0, dev_dst_mem = 0, host_src_mem = 0, host_dst_mem = 0;
 
-            bool ok = createBuffer(src_size,
-                (VkFlags)(VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT),
-                VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, dev_src, dev_src_mem);
-            ok = ok && createBuffer(dst_bytes,
-                (VkFlags)(VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT),
-                VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, dev_dst, dev_dst_mem);
-            ok = ok && createBuffer(src_size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-                (VkFlags)(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT),
-                host_src, host_src_mem);
-            ok = ok && createBuffer(dst_bytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-                (VkFlags)(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT),
-                host_dst, host_dst_mem);
-            if (!ok) {
-                destroyBuffer(dev_src, dev_src_mem);
-                destroyBuffer(dev_dst, dev_dst_mem);
-                destroyBuffer(host_src, host_src_mem);
-                destroyBuffer(host_dst, host_dst_mem);
-                recordCallFailure("Vulkan hwc2chw buffer allocation failed");
-                cpu::hwc2chw<uint8_t, float, true>(h, w, c, src, dst, alpha);
-                return;
-            }
+                bool ok = createBuffer(src_size,
+                    (VkFlags)(VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT),
+                    VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, dev_src, dev_src_mem);
+                ok = ok && createBuffer(dst_size,
+                    (VkFlags)(VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT),
+                    VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, dev_dst, dev_dst_mem);
+                ok = ok && createBuffer(src_size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                    (VkFlags)(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT),
+                    host_src, host_src_mem);
+                ok = ok && createBuffer(dst_size, VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                    (VkFlags)(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT),
+                    host_dst, host_dst_mem);
+                if (!ok) {
+                    destroyBuffer(dev_src, dev_src_mem);
+                    destroyBuffer(dev_dst, dev_dst_mem);
+                    destroyBuffer(host_src, host_src_mem);
+                    destroyBuffer(host_dst, host_dst_mem);
+                    recordCallFailure("Vulkan hwc2chw buffer allocation failed");
+                    cpu::hwc2chw<Stype, Dtype, HasAlpha, NeedClamp, NeedNormalizedMeanStds>(h, w, c, src, dst, alpha, min_v, max_v, mean, stds);
+                    return;
+                }
 
-            auto cleanup_buffers = [&]() {
-                destroyBuffer(dev_src, dev_src_mem);
-                destroyBuffer(dev_dst, dev_dst_mem);
-                destroyBuffer(host_src, host_src_mem);
-                destroyBuffer(host_dst, host_dst_mem);
-            };
-            auto fallback_to_cpu = [&]() {
+                auto cleanup_buffers = [&]() {
+                    destroyBuffer(dev_src, dev_src_mem);
+                    destroyBuffer(dev_dst, dev_dst_mem);
+                    destroyBuffer(host_src, host_src_mem);
+                    destroyBuffer(host_dst, host_dst_mem);
+                };
+                auto fallback_to_cpu = [&]() {
+                    cleanup_buffers();
+                    recordCallFailure("Vulkan hwc2chw GPU execution failed");
+                    cpu::hwc2chw<Stype, Dtype, HasAlpha, NeedClamp, NeedNormalizedMeanStds>(h, w, c, src, dst, alpha, min_v, max_v, mean, stds);
+                };
+
+                if (!writeHostBuffer(host_src_mem, src_bytes, src)) {
+                    fallback_to_cpu();
+                    return;
+                }
+
+                VkCommandBuffer cmd = 0;
+                if (!beginCommandBuffer(cmd)) {
+                    fallback_to_cpu();
+                    return;
+                }
+
+                // copy host staging buffer to device-local buffer
+                VkBufferCopy copy_region = {};
+                copy_region.srcOffset = 0;
+                copy_region.dstOffset = 0;
+                copy_region.size = src_bytes;
+                vkCmdCopyBuffer(cmd, host_src, dev_src, 1, &copy_region);
+
+                // barrier: transfer write -> shader read
+                VkMemoryBarrier barrier = {};
+                barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+                barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+                barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+                vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1, &barrier, 0, nullptr, 0, nullptr);
+
+                const PushConstants push_constants = makePushConstants(h, w, c,
+                    isFloatElementType<Stype>(), isFloatElementType<Dtype>(),
+                    HasAlpha, NeedClamp, NeedNormalizedMeanStds,
+                    (float)alpha, (float)min_v, (float)max_v, mean, stds);
+                dispatchHwc2chwKernel(cmd, dev_src, src_size, dev_dst, dst_size, push_constants);
+
+                // barrier: shader write -> transfer read
+                barrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+                barrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+                vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                    VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 1, &barrier, 0, nullptr, 0, nullptr);
+
+                // copy device-local buffer back to host staging buffer
+                copy_region.size = dst_bytes;
+                vkCmdCopyBuffer(cmd, dev_dst, host_dst, 1, &copy_region);
+
+                if (!submitCommandBuffer(cmd)) {
+                    fallback_to_cpu();
+                    return;
+                }
+
+                const bool read_ok = readHostBuffer(host_dst_mem, dst_bytes, dst);
                 cleanup_buffers();
-                recordCallFailure("Vulkan hwc2chw GPU execution failed");
-                cpu::hwc2chw<uint8_t, float, true>(h, w, c, src, dst, alpha);
-            };
-
-            if (!writeHostBuffer(host_src_mem, src_bytes, src)) {
-                fallback_to_cpu();
-                return;
+                if (!read_ok) {
+                    recordCallFailure("Vulkan hwc2chw result readback failed");
+                    cpu::hwc2chw<Stype, Dtype, HasAlpha, NeedClamp, NeedNormalizedMeanStds>(h, w, c, src, dst, alpha, min_v, max_v, mean, stds);
+                }
+                clearCallFailures();
             }
-
-            VkCommandBuffer cmd = 0;
-            if (!beginCommandBuffer(cmd)) {
-                fallback_to_cpu();
-                return;
-            }
-
-            // copy host staging buffer to device-local buffer
-            VkBufferCopy copy_region = {};
-            copy_region.srcOffset = 0;
-            copy_region.dstOffset = 0;
-            copy_region.size = src_bytes;
-            vkCmdCopyBuffer(cmd, host_src, dev_src, 1, &copy_region);
-
-            // barrier: transfer write -> shader read
-            VkMemoryBarrier barrier = {};
-            barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
-            barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-            barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-            vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT,
-                VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1, &barrier, 0, nullptr, 0, nullptr);
-
-            updateDescriptorSet(hwc2chwDescSet, dev_src, src_size, dev_dst, dst_bytes);
-
-            PushConstantsHwc2Chw push_constants = {};
-            push_constants.h = (uint32_t)h;
-            push_constants.w = (uint32_t)w;
-            push_constants.c = (uint32_t)c;
-            push_constants.alpha = alpha;
-            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, hwc2chwPipeline);
-            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipelineLayout,
-                0, 1, &hwc2chwDescSet, 0, nullptr);
-            vkCmdPushConstants(cmd, pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT,
-                0, (uint32_t)sizeof(PushConstantsHwc2Chw), &push_constants);
-            const uint32_t group_count = (uint32_t)((h * w + 255u) / 256u);
-            vkCmdDispatch(cmd, group_count, 1, 1);
-
-            // barrier: shader write -> transfer read
-            barrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
-            barrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
-            vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-                VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 1, &barrier, 0, nullptr, 0, nullptr);
-
-            // copy device-local buffer back to host staging buffer
-            copy_region.size = dst_bytes;
-            vkCmdCopyBuffer(cmd, dev_dst, host_dst, 1, &copy_region);
-
-            if (!submitCommandBuffer(cmd)) {
-                fallback_to_cpu();
-                return;
-            }
-
-            const bool read_ok = readHostBuffer(host_dst_mem, dst_bytes, dst);
-            cleanup_buffers();
-            if (!read_ok) {
-                recordCallFailure("Vulkan hwc2chw result readback failed");
-                cpu::hwc2chw<uint8_t, float, true>(h, w, c, src, dst, alpha);
-            }
-            clearCallFailures();
         }
 
         /**
         * @brief Converts image data from CHW format to HWC format
         *
+        * @tparam Stype Source data type
+        * @tparam Dtype Destination data type
+        * @tparam HasAlpha input alpha is requires participation in calculations
+        * @tparam NeedClamp input min_v and max_v are requires participation in calculations
         * @param c Number of channels
         * @param h Height of image
         * @param w Width of image
         * @param src Pointer to the source data in CHW format
         * @param dst Pointer to the destination data in HWC format
         * @param alpha Scaling factor
+        * @param min_v Minimum value for clamping
+        * @param max_v Maximum value for clamping
         */
+        template <typename Stype, typename Dtype,
+                  bool HasAlpha = false,
+                  bool NeedClamp = false>
         static void chw2hwc(
             const size_t c, const size_t h, const size_t w,
-            const float* src, uint8_t* dst,
-            const uint8_t alpha = 255.0f) {
+            const Stype* src, Dtype* dst,
+            const Dtype alpha = 1,
+            const Dtype min_v = 0, const Dtype max_v = 255) {
             vulkan();
             if (c == 0 || h == 0 || w == 0 || src == nullptr || dst == nullptr) {
                 return;
             }
-            std::lock_guard<std::mutex> lock(VulkanMutex);
-            if (initVulkanStatus.load(std::memory_order_acquire) != InitVulkanStatusEnum::Inited) {
-                // use cpu (clamp before narrowing, matching the shader behavior)
-                cpu::chw2hwc<float, uint8_t, true, true>(c, h, w, src, dst, alpha, 0, 255);
-                return;
+            if constexpr (!isSupportedElementType<Stype, Dtype>()) {
+                // use cpu (the GPU kernels cover uint8_t and float element types)
+                cpu::chw2hwc<Stype, Dtype, HasAlpha, NeedClamp>(c, h, w, src, dst, alpha, min_v, max_v); return;
             }
-            // use vulkan
-            const size_t pixel_size = h * w * c;
-            const size_t src_bytes = pixel_size * sizeof(float); // multiple of 4
-            const size_t dst_bytes = pixel_size; // uint8_t
-            const size_t dst_size = (dst_bytes + 3u) & ~size_t(3u);
+            else {
+                std::lock_guard<std::mutex> lock(VulkanMutex);
+                if (initVulkanStatus.load(std::memory_order_acquire) != InitVulkanStatusEnum::Inited) {
+                    // use cpu (clamp before narrowing, matching the shader behavior)
+                    cpu::chw2hwc<Stype, Dtype, HasAlpha, NeedClamp>(c, h, w, src, dst, alpha, min_v, max_v);
+                    return;
+                }
+                // use vulkan
+                const size_t pixel_size = h * w * c;
+                const size_t src_bytes = pixel_size * sizeof(Stype);
+                const size_t dst_bytes = pixel_size * sizeof(Dtype);
+                const size_t src_size = (src_bytes + 3u) & ~size_t(3u);
+                const size_t dst_size = (dst_bytes + 3u) & ~size_t(3u);
 
-            VkBuffer dev_src = 0, dev_dst = 0, host_src = 0, host_dst = 0;
-            VkDeviceMemory dev_src_mem = 0, dev_dst_mem = 0, host_src_mem = 0, host_dst_mem = 0;
+                VkBuffer dev_src = 0, dev_dst = 0, host_src = 0, host_dst = 0;
+                VkDeviceMemory dev_src_mem = 0, dev_dst_mem = 0, host_src_mem = 0, host_dst_mem = 0;
 
-            bool ok = createBuffer(src_bytes,
-                (VkFlags)(VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT),
-                VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, dev_src, dev_src_mem);
-            ok = ok && createBuffer(dst_size,
-                (VkFlags)(VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT),
-                VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, dev_dst, dev_dst_mem);
-            ok = ok && createBuffer(src_bytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-                (VkFlags)(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT),
-                host_src, host_src_mem);
-            ok = ok && createBuffer(dst_size, VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-                (VkFlags)(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT),
-                host_dst, host_dst_mem);
-            if (!ok) {
-                destroyBuffer(dev_src, dev_src_mem);
-                destroyBuffer(dev_dst, dev_dst_mem);
-                destroyBuffer(host_src, host_src_mem);
-                destroyBuffer(host_dst, host_dst_mem);
-                recordCallFailure("Vulkan chw2hwc buffer allocation failed");
-                cpu::chw2hwc<float, uint8_t, true, true>(c, h, w, src, dst, alpha, 0, 255);
-                return;
-            }
+                bool ok = createBuffer(src_size,
+                    (VkFlags)(VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT),
+                    VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, dev_src, dev_src_mem);
+                ok = ok && createBuffer(dst_size,
+                    (VkFlags)(VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT),
+                    VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, dev_dst, dev_dst_mem);
+                ok = ok && createBuffer(src_size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                    (VkFlags)(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT),
+                    host_src, host_src_mem);
+                ok = ok && createBuffer(dst_size, VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                    (VkFlags)(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT),
+                    host_dst, host_dst_mem);
+                if (!ok) {
+                    destroyBuffer(dev_src, dev_src_mem);
+                    destroyBuffer(dev_dst, dev_dst_mem);
+                    destroyBuffer(host_src, host_src_mem);
+                    destroyBuffer(host_dst, host_dst_mem);
+                    recordCallFailure("Vulkan chw2hwc buffer allocation failed");
+                    cpu::chw2hwc<Stype, Dtype, HasAlpha, NeedClamp>(c, h, w, src, dst, alpha, min_v, max_v);
+                    return;
+                }
 
-            auto cleanup_buffers = [&]() {
-                destroyBuffer(dev_src, dev_src_mem);
-                destroyBuffer(dev_dst, dev_dst_mem);
-                destroyBuffer(host_src, host_src_mem);
-                destroyBuffer(host_dst, host_dst_mem);
-            };
-            auto fallback_to_cpu = [&]() {
+                auto cleanup_buffers = [&]() {
+                    destroyBuffer(dev_src, dev_src_mem);
+                    destroyBuffer(dev_dst, dev_dst_mem);
+                    destroyBuffer(host_src, host_src_mem);
+                    destroyBuffer(host_dst, host_dst_mem);
+                };
+                auto fallback_to_cpu = [&]() {
+                    cleanup_buffers();
+                    recordCallFailure("Vulkan chw2hwc GPU execution failed");
+                    cpu::chw2hwc<Stype, Dtype, HasAlpha, NeedClamp>(c, h, w, src, dst, alpha, min_v, max_v);
+                };
+
+                if (!writeHostBuffer(host_src_mem, src_bytes, src)) {
+                    fallback_to_cpu();
+                    return;
+                }
+
+                VkCommandBuffer cmd = 0;
+                if (!beginCommandBuffer(cmd)) {
+                    fallback_to_cpu();
+                    return;
+                }
+
+                // copy host staging buffer to device-local buffer
+                VkBufferCopy copy_region = {};
+                copy_region.srcOffset = 0;
+                copy_region.dstOffset = 0;
+                copy_region.size = src_bytes;
+                vkCmdCopyBuffer(cmd, host_src, dev_src, 1, &copy_region);
+
+                // barrier: transfer write -> shader read
+                VkMemoryBarrier barrier = {};
+                barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+                barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+                barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+                vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1, &barrier, 0, nullptr, 0, nullptr);
+
+                const PushConstants push_constants = makePushConstants(h, w, c,
+                    isFloatElementType<Stype>(), isFloatElementType<Dtype>(),
+                    HasAlpha, NeedClamp, false,
+                    (float)alpha, (float)min_v, (float)max_v,
+                    { 0.0f, 0.0f, 0.0f }, { 1.0f, 1.0f, 1.0f });
+                dispatchChw2hwcKernel(cmd, dev_src, src_size, dev_dst, dst_size, push_constants);
+
+                // barrier: shader write -> transfer read
+                barrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+                barrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+                vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                    VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 1, &barrier, 0, nullptr, 0, nullptr);
+
+                // copy device-local buffer back to host staging buffer
+                copy_region.size = dst_bytes;
+                vkCmdCopyBuffer(cmd, dev_dst, host_dst, 1, &copy_region);
+
+                if (!submitCommandBuffer(cmd)) {
+                    fallback_to_cpu();
+                    return;
+                }
+
+                const bool read_ok = readHostBuffer(host_dst_mem, dst_bytes, dst);
                 cleanup_buffers();
-                recordCallFailure("Vulkan chw2hwc GPU execution failed");
-                cpu::chw2hwc<float, uint8_t, true, true>(c, h, w, src, dst, alpha, 0, 255);
-            };
-
-            if (!writeHostBuffer(host_src_mem, src_bytes, src)) {
-                fallback_to_cpu();
-                return;
+                if (!read_ok) {
+                    recordCallFailure("Vulkan chw2hwc result readback failed");
+                    cpu::chw2hwc<Stype, Dtype, HasAlpha, NeedClamp>(c, h, w, src, dst, alpha, min_v, max_v);
+                }
+                clearCallFailures();
             }
-
-            VkCommandBuffer cmd = 0;
-            if (!beginCommandBuffer(cmd)) {
-                fallback_to_cpu();
-                return;
-            }
-
-            // copy host staging buffer to device-local buffer
-            VkBufferCopy copy_region = {};
-            copy_region.srcOffset = 0;
-            copy_region.dstOffset = 0;
-            copy_region.size = src_bytes;
-            vkCmdCopyBuffer(cmd, host_src, dev_src, 1, &copy_region);
-
-            // barrier: transfer write -> shader read
-            VkMemoryBarrier barrier = {};
-            barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
-            barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-            barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-            vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT,
-                VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1, &barrier, 0, nullptr, 0, nullptr);
-
-            updateDescriptorSet(chw2hwcDescSet, dev_src, src_bytes, dev_dst, dst_size);
-
-            PushConstantsChw2Hwc push_constants = {};
-            push_constants.c = (uint32_t)c;
-            push_constants.h = (uint32_t)h;
-            push_constants.w = (uint32_t)w;
-            push_constants.alpha = (float)alpha;
-            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, chw2hwcPipeline);
-            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipelineLayout,
-                0, 1, &chw2hwcDescSet, 0, nullptr);
-            vkCmdPushConstants(cmd, pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT,
-                0, (uint32_t)sizeof(PushConstantsChw2Hwc), &push_constants);
-            const uint32_t group_count = (uint32_t)((dst_size + 255u) / 256u);
-            vkCmdDispatch(cmd, group_count, 1, 1);
-
-            // barrier: shader write -> transfer read
-            barrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
-            barrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
-            vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-                VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 1, &barrier, 0, nullptr, 0, nullptr);
-
-            // copy device-local buffer back to host staging buffer
-            copy_region.size = dst_bytes;
-            vkCmdCopyBuffer(cmd, dev_dst, host_dst, 1, &copy_region);
-
-            if (!submitCommandBuffer(cmd)) {
-                fallback_to_cpu();
-                return;
-            }
-
-            const bool read_ok = readHostBuffer(host_dst_mem, dst_bytes, dst);
-            cleanup_buffers();
-            if (!read_ok) {
-                recordCallFailure("Vulkan chw2hwc result readback failed");
-                cpu::chw2hwc<float, uint8_t, true, true>(c, h, w, src, dst, alpha, 0, 255);
-            }
-            clearCallFailures();
         }
 
         /**
         * @brief Converts image data from HWC format to CHW format
         *
+        * @tparam Stype Source data type
+        * @tparam Dtype Destination data type
+        * @tparam HasAlpha input alpha is requires participation in calculations
+        * @tparam NeedClamp input min_v and max_v are requires participation in calculations
+        * @tparam NeedNormalizedMeanStds input mean and stds are requires participation in calculations
         * @param h Height of image
         * @param w Width of image
         * @param c Number of channels
@@ -1210,65 +1349,77 @@ enum struct InitVulkanStatusEnum : int {
         *        Should be padded to a multiple of 4 bytes (createDeviceBuffer does this automatically).
         * @param dst Vulkan Buffer (float) Pointer to the destination data in CHW format
         * @param alpha Scaling factor
+        * @param min_v Minimum value for clamping
+        * @param max_v Maximum value for clamping
+        * @param mean Array of mean values for normalization
+        * @param stds Array of standard deviation values for normalization
         */
+        template <typename Stype, typename Dtype,
+                  bool HasAlpha = false,
+                  bool NeedClamp = false,
+                  bool NeedNormalizedMeanStds = false>
         static void hwc2chw(
             const size_t h, const size_t w, const size_t c,
             const VkBuffer src, const VkBuffer dst,
-            const float alpha = 1.f / 255.f) {
+            const Dtype alpha = 1,
+            const Dtype min_v = 0.0, const Dtype max_v = 1.0,
+            const std::array<float, 3> mean = { 0.485f, 0.456f, 0.406f },
+            const std::array<float, 3> stds = { 0.229f, 0.224f, 0.225f }) {
             vulkan();
             if (h == 0 || w == 0 || c == 0 || src == 0 || dst == 0) {
                 return;
             }
-            std::lock_guard<std::mutex> lock(VulkanMutex);
-            if (initVulkanStatus.load(std::memory_order_acquire) != InitVulkanStatusEnum::Inited) {
-                setLastError("Vulkan device-memory conversion called before successful initialization.");
+            if constexpr (!isSupportedElementType<Stype, Dtype>()) {
+                setLastError("Vulkan device-memory hwc2chw requires uint8_t/float element types.");
                 return;
             }
-            VkCommandBuffer cmd = 0;
-            if (!beginCommandBuffer(cmd)) {
-                recordCallFailure("Vulkan device-memory command buffer setup failed");
-                return;
+            else {
+                std::lock_guard<std::mutex> lock(VulkanMutex);
+                if (initVulkanStatus.load(std::memory_order_acquire) != InitVulkanStatusEnum::Inited) {
+                    setLastError("Vulkan device-memory conversion called before successful initialization.");
+                    return;
+                }
+                VkCommandBuffer cmd = 0;
+                if (!beginCommandBuffer(cmd)) {
+                    recordCallFailure("Vulkan device-memory command buffer setup failed");
+                    return;
+                }
+
+                // barrier: external write -> shader read
+                VkMemoryBarrier barrier = {};
+                barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+                barrier.srcAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT;
+                barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+                vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+                    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1, &barrier, 0, nullptr, 0, nullptr);
+
+                const PushConstants push_constants = makePushConstants(h, w, c,
+                    isFloatElementType<Stype>(), isFloatElementType<Dtype>(),
+                    HasAlpha, NeedClamp, NeedNormalizedMeanStds,
+                    (float)alpha, (float)min_v, (float)max_v, mean, stds);
+                dispatchHwc2chwKernel(cmd, src, (VkDeviceSize)VK_WHOLE_SIZE, dst, (VkDeviceSize)VK_WHOLE_SIZE, push_constants);
+
+                // barrier: shader write -> external read
+                barrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+                barrier.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT;
+                vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                    VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 1, &barrier, 0, nullptr, 0, nullptr);
+
+                if (!submitCommandBuffer(cmd)) {
+                    recordCallFailure("Vulkan device-memory conversion submission failed");
+                    return;
+                }
+                clearCallFailures();
             }
-
-            // barrier: external write -> shader read
-            VkMemoryBarrier barrier = {};
-            barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
-            barrier.srcAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT;
-            barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-            vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
-                VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1, &barrier, 0, nullptr, 0, nullptr);
-
-            updateDescriptorSet(hwc2chwDescSet, src, (VkDeviceSize)VK_WHOLE_SIZE, dst, (VkDeviceSize)VK_WHOLE_SIZE);
-
-            PushConstantsHwc2Chw push_constants = {};
-            push_constants.h = (uint32_t)h;
-            push_constants.w = (uint32_t)w;
-            push_constants.c = (uint32_t)c;
-            push_constants.alpha = alpha;
-            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, hwc2chwPipeline);
-            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipelineLayout,
-                0, 1, &hwc2chwDescSet, 0, nullptr);
-            vkCmdPushConstants(cmd, pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT,
-                0, (uint32_t)sizeof(PushConstantsHwc2Chw), &push_constants);
-            const uint32_t group_count = (uint32_t)((h * w + 255u) / 256u);
-            vkCmdDispatch(cmd, group_count, 1, 1);
-
-            // barrier: shader write -> external read
-            barrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
-            barrier.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT;
-            vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-                VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 1, &barrier, 0, nullptr, 0, nullptr);
-
-            if (!submitCommandBuffer(cmd)) {
-                recordCallFailure("Vulkan device-memory conversion submission failed");
-                return;
-            }
-            clearCallFailures();
         }
 
         /**
         * @brief Converts image data from CHW format to HWC format
         *
+        * @tparam Stype Source data type
+        * @tparam Dtype Destination data type
+        * @tparam HasAlpha input alpha is requires participation in calculations
+        * @tparam NeedClamp input min_v and max_v are requires participation in calculations
         * @param c Number of channels
         * @param h Height of image
         * @param w Width of image
@@ -1276,62 +1427,64 @@ enum struct InitVulkanStatusEnum : int {
         * @param dst Vulkan Buffer (uint8_t) Pointer to the destination data in HWC format.
         *        Should be padded to a multiple of 4 bytes (createDeviceBuffer does this automatically).
         * @param alpha Scaling factor
+        * @param min_v Minimum value for clamping
+        * @param max_v Maximum value for clamping
         */
+        template <typename Stype, typename Dtype,
+                  bool HasAlpha = false,
+                  bool NeedClamp = false>
         static void chw2hwc(
             const size_t c, const size_t h, const size_t w,
             const VkBuffer src, const VkBuffer dst,
-            const uint8_t alpha = 255.0f) {
+            const Dtype alpha = 1,
+            const Dtype min_v = 0, const Dtype max_v = 255) {
             vulkan();
             if (c == 0 || h == 0 || w == 0 || src == 0 || dst == 0) {
                 return;
             }
-            std::lock_guard<std::mutex> lock(VulkanMutex);
-            if (initVulkanStatus.load(std::memory_order_acquire) != InitVulkanStatusEnum::Inited) {
-                setLastError("Vulkan device-memory conversion called before successful initialization.");
+            if constexpr (!isSupportedElementType<Stype, Dtype>()) {
+                setLastError("Vulkan device-memory chw2hwc requires uint8_t/float element types.");
                 return;
             }
-            VkCommandBuffer cmd = 0;
-            if (!beginCommandBuffer(cmd)) {
-                recordCallFailure("Vulkan device-memory command buffer setup failed");
-                return;
+            else {
+                std::lock_guard<std::mutex> lock(VulkanMutex);
+                if (initVulkanStatus.load(std::memory_order_acquire) != InitVulkanStatusEnum::Inited) {
+                    setLastError("Vulkan device-memory conversion called before successful initialization.");
+                    return;
+                }
+                VkCommandBuffer cmd = 0;
+                if (!beginCommandBuffer(cmd)) {
+                    recordCallFailure("Vulkan device-memory command buffer setup failed");
+                    return;
+                }
+
+                // barrier: external write -> shader read
+                VkMemoryBarrier barrier = {};
+                barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+                barrier.srcAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT;
+                barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+                vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+                    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1, &barrier, 0, nullptr, 0, nullptr);
+
+                const PushConstants push_constants = makePushConstants(h, w, c,
+                    isFloatElementType<Stype>(), isFloatElementType<Dtype>(),
+                    HasAlpha, NeedClamp, false,
+                    (float)alpha, (float)min_v, (float)max_v,
+                    { 0.0f, 0.0f, 0.0f }, { 1.0f, 1.0f, 1.0f });
+                dispatchChw2hwcKernel(cmd, src, (VkDeviceSize)VK_WHOLE_SIZE, dst, (VkDeviceSize)VK_WHOLE_SIZE, push_constants);
+
+                // barrier: shader write -> external read
+                barrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+                barrier.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT;
+                vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                    VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 1, &barrier, 0, nullptr, 0, nullptr);
+
+                if (!submitCommandBuffer(cmd)) {
+                    recordCallFailure("Vulkan device-memory conversion submission failed");
+                    return;
+                }
+                clearCallFailures();
             }
-
-            // barrier: external write -> shader read
-            VkMemoryBarrier barrier = {};
-            barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
-            barrier.srcAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT;
-            barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-            vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
-                VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1, &barrier, 0, nullptr, 0, nullptr);
-
-            updateDescriptorSet(chw2hwcDescSet, src, (VkDeviceSize)VK_WHOLE_SIZE, dst, (VkDeviceSize)VK_WHOLE_SIZE);
-
-            PushConstantsChw2Hwc push_constants = {};
-            push_constants.c = (uint32_t)c;
-            push_constants.h = (uint32_t)h;
-            push_constants.w = (uint32_t)w;
-            push_constants.alpha = (float)alpha;
-            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, chw2hwcPipeline);
-            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipelineLayout,
-                0, 1, &chw2hwcDescSet, 0, nullptr);
-            vkCmdPushConstants(cmd, pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT,
-                0, (uint32_t)sizeof(PushConstantsChw2Hwc), &push_constants);
-            const size_t total_bytes = h * w * c;
-            const size_t dst_size = (total_bytes + 3u) & ~size_t(3u);
-            const uint32_t group_count = (uint32_t)((dst_size + 255u) / 256u);
-            vkCmdDispatch(cmd, group_count, 1, 1);
-
-            // barrier: shader write -> external read
-            barrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
-            barrier.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT;
-            vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-                VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 1, &barrier, 0, nullptr, 0, nullptr);
-
-            if (!submitCommandBuffer(cmd)) {
-                recordCallFailure("Vulkan device-memory conversion submission failed");
-                return;
-            }
-            clearCallFailures();
         }
 
         /**
@@ -1504,18 +1657,95 @@ enum struct InitVulkanStatusEnum : int {
         }
 
     private:
-        struct PushConstantsHwc2Chw {
+        struct PushConstants {
             uint32_t h;
             uint32_t w;
             uint32_t c;
+            uint32_t flags; // bit0: src_is_float, bit1: dst_is_float, bit2: has_alpha, bit3: need_clamp, bit4: need_norm
             float alpha;
+            float min_v;
+            float max_v;
+            float mean[3];
+            float stds[3];
         };
-        struct PushConstantsChw2Hwc {
-            uint32_t c;
-            uint32_t h;
-            uint32_t w;
-            float alpha;
-        };
+
+        // The GPU kernels cover uint8_t and float element types; every other
+        // Stype/Dtype combination keeps full CPU behavior via the fallback path.
+        template <typename Stype, typename Dtype>
+        static constexpr bool isSupportedElementType() {
+            return (std::is_same<Stype, uint8_t>::value || std::is_same<Stype, float>::value) &&
+                   (std::is_same<Dtype, uint8_t>::value || std::is_same<Dtype, float>::value);
+        }
+
+        template <typename Type>
+        static constexpr bool isFloatElementType() {
+            return std::is_same<Type, float>::value;
+        }
+
+        static PushConstants makePushConstants(
+            const size_t h, const size_t w, const size_t c,
+            const bool src_is_float, const bool dst_is_float,
+            const bool has_alpha, const bool need_clamp, const bool need_norm,
+            const float alpha, const float min_v, const float max_v,
+            const std::array<float, 3>& mean, const std::array<float, 3>& stds)
+        {
+            PushConstants push_constants = {};
+            push_constants.h = (uint32_t)h;
+            push_constants.w = (uint32_t)w;
+            push_constants.c = (uint32_t)c;
+            push_constants.flags = 0;
+            if (src_is_float) { push_constants.flags |= 1u; }
+            if (dst_is_float) { push_constants.flags |= 2u; }
+            if (has_alpha) { push_constants.flags |= 4u; }
+            if (need_clamp) { push_constants.flags |= 8u; }
+            if (need_norm) { push_constants.flags |= 16u; }
+            push_constants.alpha = alpha;
+            push_constants.min_v = min_v;
+            push_constants.max_v = max_v;
+            push_constants.mean[0] = mean[0];
+            push_constants.mean[1] = mean[1];
+            push_constants.mean[2] = mean[2];
+            push_constants.stds[0] = stds[0];
+            push_constants.stds[1] = stds[1];
+            push_constants.stds[2] = stds[2];
+            return push_constants;
+        }
+
+        static uint32_t dispatchGroupCount(const PushConstants& push_constants)
+        {
+            const uint32_t hw = push_constants.h * push_constants.w;
+            if ((push_constants.flags & 2u) != 0u) {
+                // float destination: one thread owns one pixel
+                return (hw + 255u) / 256u;
+            }
+            // uint8 destination: one thread owns one packed output word
+            const uint32_t total_words = (hw * push_constants.c + 3u) / 4u;
+            return (total_words + 255u) / 256u;
+        }
+
+        static void dispatchHwc2chwKernel(const VkCommandBuffer cmd, const VkBuffer src, const VkDeviceSize src_size,
+            const VkBuffer dst, const VkDeviceSize dst_size, const PushConstants& push_constants)
+        {
+            updateDescriptorSet(hwc2chwDescSet, src, src_size, dst, dst_size);
+            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, hwc2chwPipeline);
+            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipelineLayout,
+                0, 1, &hwc2chwDescSet, 0, nullptr);
+            vkCmdPushConstants(cmd, pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT,
+                0, (uint32_t)sizeof(PushConstants), &push_constants);
+            vkCmdDispatch(cmd, dispatchGroupCount(push_constants), 1, 1);
+        }
+
+        static void dispatchChw2hwcKernel(const VkCommandBuffer cmd, const VkBuffer src, const VkDeviceSize src_size,
+            const VkBuffer dst, const VkDeviceSize dst_size, const PushConstants& push_constants)
+        {
+            updateDescriptorSet(chw2hwcDescSet, src, src_size, dst, dst_size);
+            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, chw2hwcPipeline);
+            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipelineLayout,
+                0, 1, &chw2hwcDescSet, 0, nullptr);
+            vkCmdPushConstants(cmd, pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT,
+                0, (uint32_t)sizeof(PushConstants), &push_constants);
+            vkCmdDispatch(cmd, dispatchGroupCount(push_constants), 1, 1);
+        }
 
         static void setLastError(const std::string& message)
         {
@@ -2375,7 +2605,7 @@ enum struct InitVulkanStatusEnum : int {
             VkPushConstantRange push_range = {};
             push_range.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
             push_range.offset = 0;
-            push_range.size = 16;
+            push_range.size = (uint32_t)sizeof(PushConstants);
             VkPipelineLayoutCreateInfo pipeline_layout_info = {};
             pipeline_layout_info.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
             pipeline_layout_info.setLayoutCount = 1;

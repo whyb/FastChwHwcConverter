@@ -1,5 +1,6 @@
 #include "FastChwHwcConverter.hpp"
 #include "FastChwHwcConverterCuda.hpp"
+#include "FastChwHwcConverterOpenCL.hpp"
 #include "FastChwHwcConverterROCm.hpp"
 #include "FastChwHwcConverterVulkan.hpp"
 #include <vector>
@@ -52,13 +53,13 @@ void cuda_example()
     // step 2. Load image data to src_uint8(8U3C)
 
     // step 3. Convert HWC(Height, Width, Channels) to CHW(Channels, Height, Width)
-    whyb::nvidia::hwc2chw(h, w, c, (uint8_t*)src_uint8.data(), (float*)src_float.data(), 1.f/255.f);
+    whyb::nvidia::hwc2chw<uint8_t, float, true>(h, w, c, (uint8_t*)src_uint8.data(), (float*)src_float.data(), 1.f/255.f);
 
     // step 4. Do AI inference
     // input: src_float ==infer==> output: out_float
 
     // step 5. Convert CHW(Channels, Height, Width) to HWC(Height, Width, Channels)
-    whyb::nvidia::chw2hwc(c, h, w, (float*)out_float.data(), (uint8_t*)out_uint8.data(), 255.f);
+    whyb::nvidia::chw2hwc<float, uint8_t, true>(c, h, w, (float*)out_float.data(), (uint8_t*)out_uint8.data(), 255.f);
 
     whyb::nvidia::release();
     std::cout << "cuda example done" << std::endl;
@@ -82,13 +83,13 @@ void rocm_example()
     // step 2. Load image data to src_uint8(8U3C)
 
     // step 3. Convert HWC(Height, Width, Channels) to CHW(Channels, Height, Width)
-    whyb::amd::hwc2chw(h, w, c, (uint8_t*)src_uint8.data(), (float*)src_float.data(), 1.f / 255.f);
+    whyb::amd::hwc2chw<uint8_t, float, true>(h, w, c, (uint8_t*)src_uint8.data(), (float*)src_float.data(), 1.f / 255.f);
 
     // step 4. Do AI inference
     // input: src_float ==infer==> output: out_float
 
     // step 5. Convert CHW(Channels, Height, Width) to HWC(Height, Width, Channels)
-    whyb::amd::chw2hwc(c, h, w, (float*)out_float.data(), (uint8_t*)out_uint8.data(), 255.f);
+    whyb::amd::chw2hwc<float, uint8_t, true>(c, h, w, (float*)out_float.data(), (uint8_t*)out_uint8.data(), 255.f);
 
     whyb::amd::release();
     std::cout << "rocm example done" << std::endl;
@@ -113,16 +114,47 @@ void vulkan_example()
     // step 2. Load image data to src_uint8(8U3C)
 
     // step 3. Convert HWC(Height, Width, Channels) to CHW(Channels, Height, Width)
-    whyb::vulkan::hwc2chw(h, w, c, (uint8_t*)src_uint8.data(), (float*)src_float.data(), 1.f / 255.f);
+    whyb::vulkan::hwc2chw<uint8_t, float, true>(h, w, c, (uint8_t*)src_uint8.data(), (float*)src_float.data(), 1.f / 255.f);
 
     // step 4. Do AI inference
     // input: src_float ==infer==> output: out_float
 
     // step 5. Convert CHW(Channels, Height, Width) to HWC(Height, Width, Channels)
-    whyb::vulkan::chw2hwc(c, h, w, (float*)out_float.data(), (uint8_t*)out_uint8.data(), 255.f);
+    whyb::vulkan::chw2hwc<float, uint8_t, true>(c, h, w, (float*)out_float.data(), (uint8_t*)out_uint8.data(), 255.f);
 
     whyb::vulkan::release();
     std::cout << "vulkan example done" << std::endl;
+}
+
+
+void opencl_example()
+{
+    if (!whyb::opencl::init()) { return; }
+    const size_t c = 3;
+    const size_t w = 1920;
+    const size_t h = 1080;
+
+    // step 1. Defining input and output
+    const size_t pixel_size = h * w * c;
+    std::vector<uint8_t> src_uint8(pixel_size); // Source data(hwc)
+    std::vector<float> src_float(pixel_size); // Source data(chw)
+
+    std::vector<float> out_float(pixel_size); // Inference output data(chw)
+    std::vector<uint8_t> out_uint8(pixel_size); // Inference output data(hwc)
+
+    // step 2. Load image data to src_uint8(8U3C)
+
+    // step 3. Convert HWC(Height, Width, Channels) to CHW(Channels, Height, Width)
+    whyb::opencl::hwc2chw<uint8_t, float, true>(h, w, c, (uint8_t*)src_uint8.data(), (float*)src_float.data(), 1.f / 255.f);
+
+    // step 4. Do AI inference
+    // input: src_float ==infer==> output: out_float
+
+    // step 5. Convert CHW(Channels, Height, Width) to HWC(Height, Width, Channels)
+    whyb::opencl::chw2hwc<float, uint8_t, true>(c, h, w, (float*)out_float.data(), (uint8_t*)out_uint8.data(), 255.f);
+
+    whyb::opencl::release();
+    std::cout << "opencl example done" << std::endl;
 }
 
 int main() {
@@ -130,5 +162,6 @@ int main() {
     cuda_example();
     rocm_example();
     vulkan_example();
+    opencl_example();
     return 0;
 }

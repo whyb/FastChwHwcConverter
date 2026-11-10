@@ -54,11 +54,11 @@ int main() {
             hipMemcpyHtoD(out_float, (void*)host_src_f32.data(), pixel_size * sizeof(float));
 
             const double hwc2chw_us = whyb_test::measure_min([&]() {
-                whyb::amd::hwc2chw(height, width, channel, src_uint8, src_float, 1.f / 255.f);
+                whyb::amd::hwc2chw<uint8_t, float, true>(height, width, channel, src_uint8, src_float, 1.f / 255.f);
             }, WARMUP_COUNT, REPEAT_COUNT, TEST_COUNT);
 
             const double chw2hwc_us = whyb_test::measure_min([&]() {
-                whyb::amd::chw2hwc(channel, height, width, out_float, out_uint8, 255.f);
+                whyb::amd::chw2hwc<float, uint8_t, true, true>(channel, height, width, out_float, out_uint8, 255.f);
             }, WARMUP_COUNT, REPEAT_COUNT, TEST_COUNT);
 
             hipFree(src_uint8);

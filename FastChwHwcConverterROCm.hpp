@@ -165,36 +165,86 @@ inline hipEventSynchronize_t hipEventSynchronize = nullptr;
 inline hipEventElapsedTime_t hipEventElapsedTime = nullptr;
 inline hipEventDestroy_t hipEventDestroy = nullptr;
 
+// ---------------------------------------------------------------------------
+// HIP kernel sources (compiled at runtime with HIPRTC).
+//
+// The kernels mirror the CPU implementation exactly:
+//   value = has_alpha ? src * alpha : src
+//   value = need_norm ? (value - mean[min(ch,2)]) / stds[min(ch,2)] : value
+//   value = need_clamp ? clamp(value, min_v, max_v) : value
+//   dst = (Dtype)value
+// src_is_float / dst_is_float select the uint8_t or float element type of the
+// buffers, so all uint8_t/float source/destination combinations are covered.
+// ---------------------------------------------------------------------------
 static const char* rocmSource = R"(
 typedef unsigned char uint8_t;
 
 // HWC -> CHW
 extern "C" __global__ void rocm_hwc2chw(const size_t h, const size_t w, const size_t c,
-                                        const uint8_t* __restrict__ src, float* __restrict__ dst, const float alpha = 1.0f) {
+                                        const uint8_t* __restrict__ src, uint8_t* __restrict__ dst,
+                                        const int src_is_float, const int dst_is_float,
+                                        const int has_alpha, const int need_clamp, const int need_norm,
+                                        const float alpha, const float min_v, const float max_v,
+                                        const float mean0, const float mean1, const float mean2,
+                                        const float std0, const float std1, const float std2) {
     int dx = blockIdx.x * blockDim.x + threadIdx.x;
     int dy = blockIdx.y * blockDim.y + threadIdx.y;
 
     if ((size_t)dx < w && (size_t)dy < h) {
         const size_t pixel = (size_t)dy * w + (size_t)dx;
+        const size_t hw = w * h;
         const size_t src_base = pixel * c;
         for (size_t ch = 0; ch < c; ++ch) {
-            dst[pixel + ch * w * h] = static_cast<float>(src[src_base + ch] * alpha);
+            float value = src_is_float ? ((const float*)src)[src_base + ch] : (float)src[src_base + ch];
+            if (has_alpha) {
+                value *= alpha;
+            }
+            if (need_norm) {
+                const float mean_v = (ch < 2) ? ((ch == 0) ? mean0 : mean1) : mean2;
+                const float std_v = (ch < 2) ? ((ch == 0) ? std0 : std1) : std2;
+                value = (value - mean_v) / std_v;
+            }
+            if (need_clamp) {
+                value = (value < min_v) ? min_v : ((max_v < value) ? max_v : value);
+            }
+            const size_t dst_index = pixel + ch * hw;
+            if (dst_is_float) {
+                ((float*)dst)[dst_index] = value;
+            }
+            else {
+                dst[dst_index] = (uint8_t)value;
+            }
         }
     }
 }
 
 // CHW -> HWC
 extern "C" __global__ void rocm_chw2hwc(const size_t c, const size_t h, const size_t w,
-                                        const float* __restrict__ src, uint8_t* __restrict__ dst, const uint8_t alpha = 1) {
+                                        const uint8_t* __restrict__ src, uint8_t* __restrict__ dst,
+                                        const int src_is_float, const int dst_is_float,
+                                        const int has_alpha, const int need_clamp,
+                                        const float alpha, const float min_v, const float max_v) {
     int dx = blockIdx.x * blockDim.x + threadIdx.x;
     int dy = blockIdx.y * blockDim.y + threadIdx.y;
 
     if ((size_t)dx < w && (size_t)dy < h) {
         const size_t pixel = (size_t)dy * w + (size_t)dx;
+        const size_t hw = w * h;
         const size_t dst_base = pixel * c;
         for (size_t ch = 0; ch < c; ++ch) {
-            float value = src[pixel + ch * w * h] * alpha;
-            dst[dst_base + ch] = static_cast<uint8_t>(value < 0.0f ? 0.0f : (value > 255.0f ? 255.0f : value));
+            float value = src_is_float ? ((const float*)src)[pixel + ch * hw] : (float)src[pixel + ch * hw];
+            if (has_alpha) {
+                value *= alpha;
+            }
+            if (need_clamp) {
+                value = (value < min_v) ? min_v : ((max_v < value) ? max_v : value);
+            }
+            if (dst_is_float) {
+                ((float*)dst)[dst_base + ch] = value;
+            }
+            else {
+                dst[dst_base + ch] = (uint8_t)value;
+            }
         }
     }
 }
@@ -238,288 +288,432 @@ enum struct InitROCmStatusEnum : int
         /**
          * @brief Converts image data from HWC format to CHW format
          *
+         * @tparam Stype Source data type
+         * @tparam Dtype Destination data type
+         * @tparam HasAlpha input alpha is requires participation in calculations
+         * @tparam NeedClamp input min_v and max_v are requires participation in calculations
+         * @tparam NeedNormalizedMeanStds input mean and stds are requires participation in calculations
          * @param h Height of image
          * @param w Width of image
          * @param c Number of channels
          * @param src Pointer to the source data in HWC format
          * @param dst Pointer to the destination data in CHW format
          * @param alpha Scaling factor
+         * @param min_v Minimum value for clamping
+         * @param max_v Maximum value for clamping
+         * @param mean Array of mean values for normalization
+         * @param stds Array of standard deviation values for normalization
+         *
+         * Normalization parameters are RGB-only.  A fourth channel reuses the
+         * final parameter set to avoid reading outside the arrays.
          */
+        template <typename Stype, typename Dtype,
+                  bool HasAlpha = false,
+                  bool NeedClamp = false,
+                  bool NeedNormalizedMeanStds = false>
         static void hwc2chw(
             const size_t h, const size_t w, const size_t c,
-            const uint8_t* src, float* dst,
-            const float alpha = 1.f / 255.f) {
+            const Stype* src, Dtype* dst,
+            const Dtype alpha = 1,
+            const Dtype min_v = 0.0, const Dtype max_v = 1.0,
+            const std::array<float, 3> mean = { 0.485f, 0.456f, 0.406f },
+            const std::array<float, 3> stds = { 0.229f, 0.224f, 0.225f }) {
             amd();
-            if (initROCmStatus.load(std::memory_order_acquire) != InitROCmStatusEnum::Inited) {
-                // use cpu
-                cpu::hwc2chw<uint8_t, float, true>(h, w, c, src, dst, alpha); return;
+            if (h == 0 || w == 0 || c == 0 || src == nullptr || dst == nullptr) {
+                return;
             }
-            // Initialize sizes
-            const size_t pixel_size = h * w * c;
-            const size_t input_size = pixel_size * sizeof(uint8_t);
-            const size_t output_size = pixel_size * sizeof(float);
+            if constexpr (!isSupportedElementType<Stype, Dtype>()) {
+                // use cpu (the GPU kernels cover uint8_t and float element types)
+                cpu::hwc2chw<Stype, Dtype, HasAlpha, NeedClamp, NeedNormalizedMeanStds>(h, w, c, src, dst, alpha, min_v, max_v, mean, stds); return;
+            }
+            else {
+                if (initROCmStatus.load(std::memory_order_acquire) != InitROCmStatusEnum::Inited) {
+                    // use cpu
+                    cpu::hwc2chw<Stype, Dtype, HasAlpha, NeedClamp, NeedNormalizedMeanStds>(h, w, c, src, dst, alpha, min_v, max_v, mean, stds); return;
+                }
+                // use rocm
+                // Initialize sizes
+                const size_t pixel_size = h * w * c;
+                const size_t input_size = pixel_size * sizeof(Stype);
+                const size_t output_size = pixel_size * sizeof(Dtype);
 
-            hipDeviceptr_t rocm_input_memory = 0;
-            hipDeviceptr_t rocm_output_memory = 0;
+                hipDeviceptr_t rocm_input_memory = 0;
+                hipDeviceptr_t rocm_output_memory = 0;
 
-            // Allocate host-pinned memory
-            hipError_t hipRes0 = hipMallocAsync(&rocm_input_memory, input_size, rocmstream);
-            hipError_t hipRes1 = hipMallocAsync(&rocm_output_memory, output_size, rocmstream);
+                // Allocate host-pinned memory
+                hipError_t hipRes0 = hipMallocAsync(&rocm_input_memory, input_size, rocmstream);
+                hipError_t hipRes1 = hipMallocAsync(&rocm_output_memory, output_size, rocmstream);
 
-            if (hipRes0 != 0 || hipRes1 != 0) {
+                if (hipRes0 != 0 || hipRes1 != 0) {
+                    hipFreeAsync(rocm_input_memory, rocmstream);
+                    hipFreeAsync(rocm_output_memory, rocmstream);
+                    fallbackToCpuHwc2chw<Stype, Dtype, HasAlpha, NeedClamp, NeedNormalizedMeanStds>(h, w, c, src, dst, alpha, min_v, max_v, mean, stds, "ROCm hwc2chw GPU execution failed");
+                    return;
+                }
+
+                // Copy host memory to device memory
+                hipError_t hipRes2 = hipMemcpyHtoDAsync(rocm_input_memory, src, input_size, rocmstream);
+
+                if (hipRes2 != 0) {
+                    hipFreeAsync(rocm_input_memory, rocmstream);
+                    hipFreeAsync(rocm_output_memory, rocmstream);
+                    fallbackToCpuHwc2chw<Stype, Dtype, HasAlpha, NeedClamp, NeedNormalizedMeanStds>(h, w, c, src, dst, alpha, min_v, max_v, mean, stds, "ROCm hwc2chw GPU execution failed");
+                    return;
+                }
+
+                // Kernel execution
+                const bool launch_ok = launchHwc2chwKernel(h, w, c, rocm_input_memory, rocm_output_memory,
+                    isFloatElementType<Stype>(), isFloatElementType<Dtype>(),
+                    HasAlpha, NeedClamp, NeedNormalizedMeanStds,
+                    (float)alpha, (float)min_v, (float)max_v, mean, stds);
+
+                if (!launch_ok) {
+                    hipFreeAsync(rocm_input_memory, rocmstream);
+                    hipFreeAsync(rocm_output_memory, rocmstream);
+                    fallbackToCpuHwc2chw<Stype, Dtype, HasAlpha, NeedClamp, NeedNormalizedMeanStds>(h, w, c, src, dst, alpha, min_v, max_v, mean, stds, "ROCm hwc2chw GPU execution failed");
+                    return;
+                }
+
+                // Copy device memory to host memory
+                hipError_t hipRes5 = hipMemcpyDtoHAsync(dst, rocm_output_memory, output_size, rocmstream);
+
+                if (hipRes5 != 0) {
+                    hipFreeAsync(rocm_input_memory, rocmstream);
+                    hipFreeAsync(rocm_output_memory, rocmstream);
+                    fallbackToCpuHwc2chw<Stype, Dtype, HasAlpha, NeedClamp, NeedNormalizedMeanStds>(h, w, c, src, dst, alpha, min_v, max_v, mean, stds, "ROCm hwc2chw GPU execution failed");
+                    return;
+                }
+
+                // Free memory
                 hipFreeAsync(rocm_input_memory, rocmstream);
                 hipFreeAsync(rocm_output_memory, rocmstream);
-                fallbackToCpuHwc2chw(h, w, c, src, dst, alpha, "ROCm hwc2chw GPU execution failed");
-                return;
+
+                // Stream synchronization
+                hipError_t hipRes4 = hipStreamSynchronize(rocmstream);
+
+                if (hipRes4 != 0) {
+                    recordCallFailure("ROCm hwc2chw synchronization failed");
+                    return;
+                }
+                clearCallFailures();
             }
-
-            // Copy host memory to device memory
-            hipError_t hipRes2 = hipMemcpyHtoDAsync(rocm_input_memory, src, input_size, rocmstream);
-
-            if (hipRes2 != 0) {
-                hipFreeAsync(rocm_input_memory, rocmstream);
-                hipFreeAsync(rocm_output_memory, rocmstream);
-                fallbackToCpuHwc2chw(h, w, c, src, dst, alpha, "ROCm hwc2chw GPU execution failed");
-                return;
-            }
-
-            // Kernel execution
-            const unsigned int blockDimX = 32, blockDimY = 32, blockDimZ = 1;
-            const unsigned int gridDimX = ((unsigned int)w + blockDimX - 1) / blockDimX;
-            const unsigned int gridDimY = ((unsigned int)h + blockDimY - 1) / blockDimY;
-            const unsigned int gridDimZ = 1;
-
-            size_t arg_h_val = h, arg_w_val = w, arg_c_val = c;
-            float arg_alpha_val = alpha;
-            void* args[] = { &arg_h_val, &arg_w_val, &arg_c_val, &rocm_input_memory, &rocm_output_memory, &arg_alpha_val };
-
-            hipError_t hipRes3 = hipModuleLaunchKernel(
-                hwc2chwROCmFun,
-                gridDimX, gridDimY, gridDimZ,
-                blockDimX, blockDimY, blockDimZ,
-                0, rocmstream, args, nullptr);
-
-            if (hipRes3 != 0) {
-                hipFreeAsync(rocm_input_memory, rocmstream);
-                hipFreeAsync(rocm_output_memory, rocmstream);
-                fallbackToCpuHwc2chw(h, w, c, src, dst, alpha, "ROCm hwc2chw GPU execution failed");
-                return;
-            }
-
-            // Copy device memory to host memory
-            hipError_t hipRes5 = hipMemcpyDtoHAsync(dst, rocm_output_memory, output_size, rocmstream);
-
-            if (hipRes5 != 0) {
-                hipFreeAsync(rocm_input_memory, rocmstream);
-                hipFreeAsync(rocm_output_memory, rocmstream);
-                fallbackToCpuHwc2chw(h, w, c, src, dst, alpha, "ROCm hwc2chw GPU execution failed");
-                return;
-            }
-
-            // Free memory
-            hipFreeAsync(rocm_input_memory, rocmstream);
-            hipFreeAsync(rocm_output_memory, rocmstream);
-
-            // Stream synchronization
-            hipError_t hipRes4 = hipStreamSynchronize(rocmstream);
-
-            if (hipRes4 != 0) {
-                recordCallFailure("ROCm hwc2chw synchronization failed");
-                return;
-            }
-            clearCallFailures();
         }
 
         /**
          * @brief Converts image data from CHW format to HWC format
          *
+         * @tparam Stype Source data type
+         * @tparam Dtype Destination data type
+         * @tparam HasAlpha input alpha is requires participation in calculations
+         * @tparam NeedClamp input min_v and max_v are requires participation in calculations
          * @param c Number of channels
          * @param h Height of image
          * @param w Width of image
          * @param src Pointer to the source data in CHW format
          * @param dst Pointer to the destination data in HWC format
          * @param alpha Scaling factor
+         * @param min_v Minimum value for clamping
+         * @param max_v Maximum value for clamping
          */
+        template <typename Stype, typename Dtype,
+                  bool HasAlpha = false,
+                  bool NeedClamp = false>
         static void chw2hwc(
             const size_t c, const size_t h, const size_t w,
-            const float* src, uint8_t* dst,
-            const uint8_t alpha = 255.0f) {
+            const Stype* src, Dtype* dst,
+            const Dtype alpha = 1,
+            const Dtype min_v = 0, const Dtype max_v = 255) {
             amd();
-            if (initROCmStatus.load(std::memory_order_acquire) != InitROCmStatusEnum::Inited) {
-                // use cpu
-                cpu::chw2hwc<float, uint8_t, true, true>(c, h, w, src, dst, alpha); return;
-            }
-            // use rocm
-            const size_t pixel_size = h * w * c;
-            size_t input_size = pixel_size * sizeof(float);
-            size_t output_size = pixel_size * sizeof(uint8_t);
-            hipDeviceptr_t rocm_input_memory = 0;
-            hipDeviceptr_t rocm_output_memory = 0;
-
-            // Allocate device memory
-            hipError_t hipRes0 = hipMallocAsync(&rocm_input_memory, input_size, rocmstream);
-            hipError_t hipRes1 = hipMallocAsync(&rocm_output_memory, output_size, rocmstream);
-
-            if (hipRes0 != 0 || hipRes1 != 0) {
-                hipFreeAsync(rocm_input_memory, rocmstream);
-                hipFreeAsync(rocm_output_memory, rocmstream);
-                fallbackToCpuChw2hwc(c, h, w, src, dst, alpha, "ROCm chw2hwc GPU execution failed"); return;
-            }
-
-            // Copy host memory to device memory
-            hipError_t hipRes2 = hipMemcpyHtoDAsync(rocm_input_memory, src, input_size, rocmstream);
-
-            if (hipRes2 != 0) {
-                hipFreeAsync(rocm_input_memory, rocmstream);
-                hipFreeAsync(rocm_output_memory, rocmstream);
-                fallbackToCpuChw2hwc(c, h, w, src, dst, alpha, "ROCm chw2hwc GPU execution failed"); return;
-            }
-
-            // Call kernel
-            const unsigned int blockDimX = 32, blockDimY = 32, blockDimZ = 1;
-            const unsigned int gridDimX = ((unsigned int)w + blockDimX - 1) / blockDimX;
-            const unsigned int gridDimY = ((unsigned int)h + blockDimY - 1) / blockDimY;
-            const unsigned int gridDimZ = 1;
-
-            size_t arg_c_val = c;
-            size_t arg_h_val = h;
-            size_t arg_w_val = w;
-            uint8_t arg_alpha_val = alpha;
-            void* args[] = { &arg_c_val, &arg_h_val, &arg_w_val, &rocm_input_memory, &rocm_output_memory, &arg_alpha_val };
-
-            hipError_t hipRes3 = hipModuleLaunchKernel(
-                chw2hwcROCmFun,
-                gridDimX, gridDimY, gridDimZ,
-                blockDimX, blockDimY, blockDimZ,
-                0, rocmstream, args, nullptr);
-
-            if (hipRes3 != 0) {
-                hipFreeAsync(rocm_input_memory, rocmstream);
-                hipFreeAsync(rocm_output_memory, rocmstream);
-                fallbackToCpuChw2hwc(c, h, w, src, dst, alpha, "ROCm chw2hwc GPU execution failed"); return;
-            }
-
-            // Copy device memory to host memory
-            hipError_t hipRes5 = hipMemcpyDtoHAsync(dst, rocm_output_memory, output_size, rocmstream);
-
-            if (hipRes5 != 0) {
-                hipFreeAsync(rocm_input_memory, rocmstream);
-                hipFreeAsync(rocm_output_memory, rocmstream);
-                fallbackToCpuChw2hwc(c, h, w, src, dst, alpha, "ROCm chw2hwc GPU execution failed"); return;
-            }
-
-            // Free memory
-            hipFreeAsync(rocm_input_memory, rocmstream);
-            hipFreeAsync(rocm_output_memory, rocmstream);
-            hipError_t hipRes4 = hipStreamSynchronize(rocmstream);
-
-            if (hipRes4 != 0) {
-
-                recordCallFailure("ROCm chw2hwc synchronization failed");
+            if (c == 0 || h == 0 || w == 0 || src == nullptr || dst == nullptr) {
                 return;
             }
-            clearCallFailures();
+            if constexpr (!isSupportedElementType<Stype, Dtype>()) {
+                // use cpu (the GPU kernels cover uint8_t and float element types)
+                cpu::chw2hwc<Stype, Dtype, HasAlpha, NeedClamp>(c, h, w, src, dst, alpha, min_v, max_v); return;
+            }
+            else {
+                if (initROCmStatus.load(std::memory_order_acquire) != InitROCmStatusEnum::Inited) {
+                    // use cpu
+                    cpu::chw2hwc<Stype, Dtype, HasAlpha, NeedClamp>(c, h, w, src, dst, alpha, min_v, max_v); return;
+                }
+                // use rocm
+                const size_t pixel_size = h * w * c;
+                const size_t input_size = pixel_size * sizeof(Stype);
+                const size_t output_size = pixel_size * sizeof(Dtype);
+                hipDeviceptr_t rocm_input_memory = 0;
+                hipDeviceptr_t rocm_output_memory = 0;
+
+                // Allocate device memory
+                hipError_t hipRes0 = hipMallocAsync(&rocm_input_memory, input_size, rocmstream);
+                hipError_t hipRes1 = hipMallocAsync(&rocm_output_memory, output_size, rocmstream);
+
+                if (hipRes0 != 0 || hipRes1 != 0) {
+                    hipFreeAsync(rocm_input_memory, rocmstream);
+                    hipFreeAsync(rocm_output_memory, rocmstream);
+                    fallbackToCpuChw2hwc<Stype, Dtype, HasAlpha, NeedClamp>(c, h, w, src, dst, alpha, min_v, max_v, "ROCm chw2hwc GPU execution failed"); return;
+                }
+
+                // Copy host memory to device memory
+                hipError_t hipRes2 = hipMemcpyHtoDAsync(rocm_input_memory, src, input_size, rocmstream);
+
+                if (hipRes2 != 0) {
+                    hipFreeAsync(rocm_input_memory, rocmstream);
+                    hipFreeAsync(rocm_output_memory, rocmstream);
+                    fallbackToCpuChw2hwc<Stype, Dtype, HasAlpha, NeedClamp>(c, h, w, src, dst, alpha, min_v, max_v, "ROCm chw2hwc GPU execution failed"); return;
+                }
+
+                // Call kernel
+                const bool launch_ok = launchChw2hwcKernel(c, h, w, rocm_input_memory, rocm_output_memory,
+                    isFloatElementType<Stype>(), isFloatElementType<Dtype>(),
+                    HasAlpha, NeedClamp,
+                    (float)alpha, (float)min_v, (float)max_v);
+
+                if (!launch_ok) {
+                    hipFreeAsync(rocm_input_memory, rocmstream);
+                    hipFreeAsync(rocm_output_memory, rocmstream);
+                    fallbackToCpuChw2hwc<Stype, Dtype, HasAlpha, NeedClamp>(c, h, w, src, dst, alpha, min_v, max_v, "ROCm chw2hwc GPU execution failed"); return;
+                }
+
+                // Copy device memory to host memory
+                hipError_t hipRes5 = hipMemcpyDtoHAsync(dst, rocm_output_memory, output_size, rocmstream);
+
+                if (hipRes5 != 0) {
+                    hipFreeAsync(rocm_input_memory, rocmstream);
+                    hipFreeAsync(rocm_output_memory, rocmstream);
+                    fallbackToCpuChw2hwc<Stype, Dtype, HasAlpha, NeedClamp>(c, h, w, src, dst, alpha, min_v, max_v, "ROCm chw2hwc GPU execution failed"); return;
+                }
+
+                // Free memory
+                hipFreeAsync(rocm_input_memory, rocmstream);
+                hipFreeAsync(rocm_output_memory, rocmstream);
+                hipError_t hipRes4 = hipStreamSynchronize(rocmstream);
+
+                if (hipRes4 != 0) {
+
+                    recordCallFailure("ROCm chw2hwc synchronization failed");
+                    return;
+                }
+                clearCallFailures();
+            }
         }
 
         /**
          * @brief Converts image data from HWC format to CHW format
          *
+         * @tparam Stype Source data type
+         * @tparam Dtype Destination data type
+         * @tparam HasAlpha input alpha is requires participation in calculations
+         * @tparam NeedClamp input min_v and max_v are requires participation in calculations
+         * @tparam NeedNormalizedMeanStds input mean and stds are requires participation in calculations
          * @param h Height of image
          * @param w Width of image
          * @param c Number of channels
          * @param src ROCm Memory (uint8_t) Pointer to the source data in HWC format
          * @param dst ROCm Memory (float) Pointer to the destination data in CHW format
          * @param alpha Scaling factor
+         * @param min_v Minimum value for clamping
+         * @param max_v Maximum value for clamping
+         * @param mean Array of mean values for normalization
+         * @param stds Array of standard deviation values for normalization
          */
+        template <typename Stype, typename Dtype,
+                  bool HasAlpha = false,
+                  bool NeedClamp = false,
+                  bool NeedNormalizedMeanStds = false>
         static void hwc2chw(
             const size_t h, const size_t w, const size_t c,
             hipDeviceptr_t src, hipDeviceptr_t dst,
-            const float alpha = 1.f / 255.f) {
+            const Dtype alpha = 1,
+            const Dtype min_v = 0.0, const Dtype max_v = 1.0,
+            const std::array<float, 3> mean = { 0.485f, 0.456f, 0.406f },
+            const std::array<float, 3> stds = { 0.229f, 0.224f, 0.225f }) {
             amd();
-            if (initROCmStatus.load(std::memory_order_acquire) != InitROCmStatusEnum::Inited) {
-                setLastError("ROCm device-memory hwc2chw called before successful initialization.");
+            if (h == 0 || w == 0 || c == 0 || src == 0 || dst == 0) {
                 return;
             }
-            const size_t pixel_size = h * w * c;
-            const size_t input_size = pixel_size * sizeof(uint8_t);
-            const size_t output_size = pixel_size * sizeof(float);
-
-            const unsigned int blockDimX = 32, blockDimY = 32, blockDimZ = 1;
-            const unsigned int gridDimX = ((unsigned int)w + blockDimX - 1) / blockDimX;
-            const unsigned int gridDimY = ((unsigned int)h + blockDimY - 1) / blockDimY;
-            const unsigned int gridDimZ = 1;
-            // for ready rocm kernel function(func_hwc2chw)
-            size_t arg_h_val = h;
-            size_t arg_w_val = w;
-            size_t arg_c_val = c;
-            float arg_alpha_val = alpha;
-            void* args[] = { &arg_h_val, &arg_w_val, &arg_c_val, &src, &dst, &arg_alpha_val };
-            hipError_t hipRes0 = hipModuleLaunchKernel(
-                hwc2chwROCmFun,
-                gridDimX, gridDimY, gridDimZ,
-                blockDimX, blockDimY, blockDimZ,
-                0, rocmstream, args, nullptr);
-            if (hipRes0 != 0) {
-                recordCallFailure("ROCm device-memory hwc2chw launch failed");
+            if constexpr (!isSupportedElementType<Stype, Dtype>()) {
+                setLastError("ROCm device-memory hwc2chw requires uint8_t/float element types.");
                 return;
             }
-            hipError_t hipRes1 = hipStreamSynchronize(rocmstream);
-            if (hipRes1 != 0) {
-                recordCallFailure("ROCm device-memory hwc2chw synchronization failed");
+            else {
+                if (initROCmStatus.load(std::memory_order_acquire) != InitROCmStatusEnum::Inited) {
+                    setLastError("ROCm device-memory hwc2chw called before successful initialization.");
+                    return;
+                }
+                const bool launch_ok = launchHwc2chwKernel(h, w, c, src, dst,
+                    isFloatElementType<Stype>(), isFloatElementType<Dtype>(),
+                    HasAlpha, NeedClamp, NeedNormalizedMeanStds,
+                    (float)alpha, (float)min_v, (float)max_v, mean, stds);
+                if (!launch_ok) {
+                    recordCallFailure("ROCm device-memory hwc2chw launch failed");
+                    return;
+                }
+                hipError_t hipRes1 = hipStreamSynchronize(rocmstream);
+                if (hipRes1 != 0) {
+                    recordCallFailure("ROCm device-memory hwc2chw synchronization failed");
+                    return;
+                }
+                clearCallFailures();
                 return;
             }
-            clearCallFailures();
-            return;
         }
 
         /**
          * @brief Converts image data from CHW format to HWC format
          *
+         * @tparam Stype Source data type
+         * @tparam Dtype Destination data type
+         * @tparam HasAlpha input alpha is requires participation in calculations
+         * @tparam NeedClamp input min_v and max_v are requires participation in calculations
          * @param c Number of channels
          * @param h Height of image
          * @param w Width of image
          * @param src ROCm Memory (float) Pointer to the source data in CHW format
          * @param dst ROCm Memory (uint8_t) Pointer to the destination data in HWC format
          * @param alpha Scaling factor
+         * @param min_v Minimum value for clamping
+         * @param max_v Maximum value for clamping
          */
+        template <typename Stype, typename Dtype,
+                  bool HasAlpha = false,
+                  bool NeedClamp = false>
         static void chw2hwc(
             const size_t c, const size_t h, const size_t w,
             hipDeviceptr_t src, hipDeviceptr_t dst,
-            const uint8_t alpha = 255.0f) {
+            const Dtype alpha = 1,
+            const Dtype min_v = 0, const Dtype max_v = 255) {
             amd();
-            if (initROCmStatus.load(std::memory_order_acquire) != InitROCmStatusEnum::Inited) {
-                setLastError("ROCm device-memory chw2hwc called before successful initialization.");
+            if (c == 0 || h == 0 || w == 0 || src == 0 || dst == 0) {
                 return;
+            }
+            if constexpr (!isSupportedElementType<Stype, Dtype>()) {
+                setLastError("ROCm device-memory chw2hwc requires uint8_t/float element types.");
+                return;
+            }
+            else {
+                if (initROCmStatus.load(std::memory_order_acquire) != InitROCmStatusEnum::Inited) {
+                    setLastError("ROCm device-memory chw2hwc called before successful initialization.");
+                    return;
+                }
+                const bool launch_ok = launchChw2hwcKernel(c, h, w, src, dst,
+                    isFloatElementType<Stype>(), isFloatElementType<Dtype>(),
+                    HasAlpha, NeedClamp,
+                    (float)alpha, (float)min_v, (float)max_v);
+                if (!launch_ok) {
+                    recordCallFailure("ROCm device-memory chw2hwc launch failed");
+                    return;
+                }
+                hipError_t hipRes1 = hipStreamSynchronize(rocmstream);
+                if (hipRes1 != 0) {
+                    recordCallFailure("ROCm device-memory chw2hwc synchronization failed");
+                    return;
+                }
+                clearCallFailures();
+                return;
+            }
+        }
+
+    private:
+        // The GPU kernels cover uint8_t and float element types; every other
+        // Stype/Dtype combination keeps full CPU behavior via the fallback path.
+        template <typename Stype, typename Dtype>
+        static constexpr bool isSupportedElementType() {
+            return (std::is_same<Stype, uint8_t>::value || std::is_same<Stype, float>::value) &&
+                   (std::is_same<Dtype, uint8_t>::value || std::is_same<Dtype, float>::value);
+        }
+
+        template <typename Type>
+        static constexpr bool isFloatElementType() {
+            return std::is_same<Type, float>::value;
+        }
+
+        static bool launchHwc2chwKernel(
+            const size_t h, const size_t w, const size_t c,
+            const hipDeviceptr_t src, const hipDeviceptr_t dst,
+            const bool src_is_float, const bool dst_is_float,
+            const bool has_alpha, const bool need_clamp, const bool need_norm,
+            const float alpha, const float min_v, const float max_v,
+            const std::array<float, 3>& mean, const std::array<float, 3>& stds)
+        {
+            if (hwc2chwROCmFun == nullptr) {
+                return false;
             }
             const unsigned int blockDimX = 32, blockDimY = 32, blockDimZ = 1;
             const unsigned int gridDimX = ((unsigned int)w + blockDimX - 1) / blockDimX;
             const unsigned int gridDimY = ((unsigned int)h + blockDimY - 1) / blockDimY;
             const unsigned int gridDimZ = 1;
             // for ready rocm kernel function(func_hwc2chw)
+            size_t arg_h_val = h, arg_w_val = w, arg_c_val = c;
+            hipDeviceptr_t arg_src_val = src;
+            hipDeviceptr_t arg_dst_val = dst;
+            int arg_src_is_float_val = src_is_float ? 1 : 0;
+            int arg_dst_is_float_val = dst_is_float ? 1 : 0;
+            int arg_has_alpha_val = has_alpha ? 1 : 0;
+            int arg_need_clamp_val = need_clamp ? 1 : 0;
+            int arg_need_norm_val = need_norm ? 1 : 0;
+            float arg_alpha_val = alpha;
+            float arg_min_v_val = min_v;
+            float arg_max_v_val = max_v;
+            float arg_mean0_val = mean[0];
+            float arg_mean1_val = mean[1];
+            float arg_mean2_val = mean[2];
+            float arg_std0_val = stds[0];
+            float arg_std1_val = stds[1];
+            float arg_std2_val = stds[2];
+            void* args[] = {
+                &arg_h_val, &arg_w_val, &arg_c_val, &arg_src_val, &arg_dst_val,
+                &arg_src_is_float_val, &arg_dst_is_float_val, &arg_has_alpha_val,
+                &arg_need_clamp_val, &arg_need_norm_val,
+                &arg_alpha_val, &arg_min_v_val, &arg_max_v_val,
+                &arg_mean0_val, &arg_mean1_val, &arg_mean2_val,
+                &arg_std0_val, &arg_std1_val, &arg_std2_val };
+            hipError_t hipRes = hipModuleLaunchKernel(
+                hwc2chwROCmFun,
+                gridDimX, gridDimY, gridDimZ,
+                blockDimX, blockDimY, blockDimZ,
+                0, rocmstream, args, nullptr);
+            return hipRes == 0;
+        }
+
+        static bool launchChw2hwcKernel(
+            const size_t c, const size_t h, const size_t w,
+            const hipDeviceptr_t src, const hipDeviceptr_t dst,
+            const bool src_is_float, const bool dst_is_float,
+            const bool has_alpha, const bool need_clamp,
+            const float alpha, const float min_v, const float max_v)
+        {
+            if (chw2hwcROCmFun == nullptr) {
+                return false;
+            }
+            const unsigned int blockDimX = 32, blockDimY = 32, blockDimZ = 1;
+            const unsigned int gridDimX = ((unsigned int)w + blockDimX - 1) / blockDimX;
+            const unsigned int gridDimY = ((unsigned int)h + blockDimY - 1) / blockDimY;
+            const unsigned int gridDimZ = 1;
+            // for ready rocm kernel function(func_chw2hwc)
             size_t arg_c_val = c;
             size_t arg_h_val = h;
             size_t arg_w_val = w;
-            uint8_t arg_alpha_val = alpha;
-            void* args[] = { &arg_c_val, &arg_h_val, &arg_w_val, &src, &dst, &arg_alpha_val };
-            hipError_t hipRes0 = hipModuleLaunchKernel(
+            hipDeviceptr_t arg_src_val = src;
+            hipDeviceptr_t arg_dst_val = dst;
+            int arg_src_is_float_val = src_is_float ? 1 : 0;
+            int arg_dst_is_float_val = dst_is_float ? 1 : 0;
+            int arg_has_alpha_val = has_alpha ? 1 : 0;
+            int arg_need_clamp_val = need_clamp ? 1 : 0;
+            float arg_alpha_val = alpha;
+            float arg_min_v_val = min_v;
+            float arg_max_v_val = max_v;
+            void* args[] = {
+                &arg_c_val, &arg_h_val, &arg_w_val, &arg_src_val, &arg_dst_val,
+                &arg_src_is_float_val, &arg_dst_is_float_val, &arg_has_alpha_val,
+                &arg_need_clamp_val,
+                &arg_alpha_val, &arg_min_v_val, &arg_max_v_val };
+            hipError_t hipRes = hipModuleLaunchKernel(
                 chw2hwcROCmFun,
                 gridDimX, gridDimY, gridDimZ,
                 blockDimX, blockDimY, blockDimZ,
                 0, rocmstream, args, nullptr);
-            if (hipRes0 != 0) {
-                recordCallFailure("ROCm device-memory chw2hwc launch failed");
-                return;
-            }
-            hipError_t hipRes1 = hipStreamSynchronize(rocmstream);
-            if (hipRes1 != 0) {
-                recordCallFailure("ROCm device-memory chw2hwc synchronization failed");
-                return;
-            }
-            clearCallFailures();
-            return;
+            return hipRes == 0;
         }
-
-    private:
 
         static bool isFileExists(const std::string& path)
         {
@@ -533,18 +727,27 @@ enum struct InitROCmStatusEnum : int
 
         // GPU and CPU fallback kernels clamp float->uint8 values before the
         // narrow.  This avoids undefined behavior and keeps results identical.
+        template <typename Stype, typename Dtype,
+                  bool HasAlpha, bool NeedClamp, bool NeedNormalizedMeanStds>
         static void fallbackToCpuHwc2chw(size_t h, size_t w, size_t c,
-            const uint8_t* src, float* dst, float alpha, const char* message)
+            const Stype* src, Dtype* dst, const Dtype alpha,
+            const Dtype min_v, const Dtype max_v,
+            const std::array<float, 3>& mean, const std::array<float, 3>& stds,
+            const char* message)
         {
             recordCallFailure(message);
-            cpu::hwc2chw<uint8_t, float, true>(h, w, c, src, dst, alpha);
+            cpu::hwc2chw<Stype, Dtype, HasAlpha, NeedClamp, NeedNormalizedMeanStds>(h, w, c, src, dst, alpha, min_v, max_v, mean, stds);
         }
 
+        template <typename Stype, typename Dtype,
+                  bool HasAlpha, bool NeedClamp>
         static void fallbackToCpuChw2hwc(size_t c, size_t h, size_t w,
-            const float* src, uint8_t* dst, uint8_t alpha, const char* message)
+            const Stype* src, Dtype* dst, const Dtype alpha,
+            const Dtype min_v, const Dtype max_v,
+            const char* message)
         {
             recordCallFailure(message);
-            cpu::chw2hwc<float, uint8_t, true, true>(c, h, w, src, dst, alpha);
+            cpu::chw2hwc<Stype, Dtype, HasAlpha, NeedClamp>(c, h, w, src, dst, alpha, min_v, max_v);
         }
 
         static void setLastError(const std::string& message)

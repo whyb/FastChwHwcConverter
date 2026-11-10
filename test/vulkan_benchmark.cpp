@@ -58,11 +58,11 @@ int main() {
             whyb::vulkan::uploadToDeviceBuffer(out_float, out_float_mem, pixel_size * sizeof(float), host_src_f32.data());
 
             const double hwc2chw_us = whyb_test::measure_min([&]() {
-                whyb::vulkan::hwc2chw(height, width, channel, src_uint8, src_float, 1.f / 255.f);
+                whyb::vulkan::hwc2chw<uint8_t, float, true>(height, width, channel, src_uint8, src_float, 1.f / 255.f);
             }, WARMUP_COUNT, REPEAT_COUNT, TEST_COUNT);
 
             const double chw2hwc_us = whyb_test::measure_min([&]() {
-                whyb::vulkan::chw2hwc(channel, height, width, out_float, out_uint8, 255.f);
+                whyb::vulkan::chw2hwc<float, uint8_t, true, true>(channel, height, width, out_float, out_uint8, 255.f);
             }, WARMUP_COUNT, REPEAT_COUNT, TEST_COUNT);
 
             whyb::vulkan::destroyDeviceBuffer(src_uint8, src_uint8_mem);

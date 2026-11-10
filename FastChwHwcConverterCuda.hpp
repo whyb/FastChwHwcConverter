@@ -126,36 +126,86 @@ inline cuMemFreeHost_t cuMemFreeHost = nullptr;
 inline cuMemcpyHtoD_t cuMemcpyHtoD = nullptr;
 inline cuMemcpyDtoH_t cuMemcpyDtoH = nullptr;
 
+// ---------------------------------------------------------------------------
+// CUDA kernel sources (compiled to PTX at runtime with NVRTC).
+//
+// The kernels mirror the CPU implementation exactly:
+//   value = has_alpha ? src * alpha : src
+//   value = need_norm ? (value - mean[min(ch,2)]) / stds[min(ch,2)] : value
+//   value = need_clamp ? clamp(value, min_v, max_v) : value
+//   dst = (Dtype)value
+// src_is_float / dst_is_float select the uint8_t or float element type of the
+// buffers, so all uint8_t/float source/destination combinations are covered.
+// ---------------------------------------------------------------------------
 static const char* cudaSource = R"(
   typedef unsigned char uint8_t;
 
   // HWC -> CHW
   extern "C" __global__ void cuda_hwc2chw(const size_t h, const size_t w, const size_t c,
-                                          const uint8_t* __restrict__ src, float* __restrict__ dst, const float alpha = 1.0f) {
+                                          const uint8_t* __restrict__ src, uint8_t* __restrict__ dst,
+                                          const int src_is_float, const int dst_is_float,
+                                          const int has_alpha, const int need_clamp, const int need_norm,
+                                          const float alpha, const float min_v, const float max_v,
+                                          const float mean0, const float mean1, const float mean2,
+                                          const float std0, const float std1, const float std2) {
       int dx = blockIdx.x * blockDim.x + threadIdx.x;
       int dy = blockIdx.y * blockDim.y + threadIdx.y;
 
       if ((size_t)dx < w && (size_t)dy < h) {
           const size_t pixel = (size_t)dy * w + (size_t)dx;
+          const size_t hw = w * h;
           const size_t src_base = pixel * c;
           for (size_t ch = 0; ch < c; ++ch) {
-              dst[pixel + ch * w * h] = static_cast<float>(src[src_base + ch] * alpha);
+              float value = src_is_float ? ((const float*)src)[src_base + ch] : (float)src[src_base + ch];
+              if (has_alpha) {
+                  value *= alpha;
+              }
+              if (need_norm) {
+                  const float mean_v = (ch < 2) ? ((ch == 0) ? mean0 : mean1) : mean2;
+                  const float std_v = (ch < 2) ? ((ch == 0) ? std0 : std1) : std2;
+                  value = (value - mean_v) / std_v;
+              }
+              if (need_clamp) {
+                  value = (value < min_v) ? min_v : ((max_v < value) ? max_v : value);
+              }
+              const size_t dst_index = pixel + ch * hw;
+              if (dst_is_float) {
+                  ((float*)dst)[dst_index] = value;
+              }
+              else {
+                  dst[dst_index] = (uint8_t)value;
+              }
           }
       }
   }
 
    // CHW -> HWC
    extern "C" __global__ void cuda_chw2hwc(const size_t c, const size_t h, const size_t w,
-                                           const float* __restrict__ src, uint8_t* __restrict__ dst, const uint8_t alpha = 1) {
+                                           const uint8_t* __restrict__ src, uint8_t* __restrict__ dst,
+                                           const int src_is_float, const int dst_is_float,
+                                           const int has_alpha, const int need_clamp,
+                                           const float alpha, const float min_v, const float max_v) {
        int dx = blockIdx.x * blockDim.x + threadIdx.x;
        int dy = blockIdx.y * blockDim.y + threadIdx.y;
 
        if ((size_t)dx < w && (size_t)dy < h) {
            const size_t pixel = (size_t)dy * w + (size_t)dx;
+           const size_t hw = w * h;
            const size_t dst_base = pixel * c;
            for (size_t ch = 0; ch < c; ++ch) {
-               float value = src[pixel + ch * w * h] * alpha;
-               dst[dst_base + ch] = static_cast<uint8_t>(value < 0.0f ? 0.0f : (value > 255.0f ? 255.0f : value));
+               float value = src_is_float ? ((const float*)src)[pixel + ch * hw] : (float)src[pixel + ch * hw];
+               if (has_alpha) {
+                   value *= alpha;
+               }
+               if (need_clamp) {
+                   value = (value < min_v) ? min_v : ((max_v < value) ? max_v : value);
+               }
+               if (dst_is_float) {
+                   ((float*)dst)[dst_base + ch] = value;
+               }
+               else {
+                   dst[dst_base + ch] = (uint8_t)value;
+               }
            }
        }
    }
@@ -198,272 +248,419 @@ enum struct InitCUDAStatusEnum : int
         /**
         * @brief Converts image data from HWC format to CHW format
         *
+        * @tparam Stype Source data type
+        * @tparam Dtype Destination data type
+        * @tparam HasAlpha input alpha is requires participation in calculations
+        * @tparam NeedClamp input min_v and max_v are requires participation in calculations
+        * @tparam NeedNormalizedMeanStds input mean and stds are requires participation in calculations
         * @param h Height of image
         * @param w Width of image
         * @param c Number of channels
         * @param src Pointer to the source data in HWC format
         * @param dst Pointer to the destination data in CHW format
         * @param alpha Scaling factor
+        * @param min_v Minimum value for clamping
+        * @param max_v Maximum value for clamping
+        * @param mean Array of mean values for normalization
+        * @param stds Array of standard deviation values for normalization
+        *
+        * Normalization parameters are RGB-only.  A fourth channel reuses the
+        * final parameter set to avoid reading outside the arrays.
         */
+        template <typename Stype, typename Dtype,
+                  bool HasAlpha = false,
+                  bool NeedClamp = false,
+                  bool NeedNormalizedMeanStds = false>
         static void hwc2chw(
             const size_t h, const size_t w, const size_t c,
-            const uint8_t* src, float* dst,
-            const float alpha = 1.f / 255.f) {
+            const Stype* src, Dtype* dst,
+            const Dtype alpha = 1,
+            const Dtype min_v = 0.0, const Dtype max_v = 1.0,
+            const std::array<float, 3> mean = { 0.485f, 0.456f, 0.406f },
+            const std::array<float, 3> stds = { 0.229f, 0.224f, 0.225f }) {
             nvidia();
-            if (initCUDAStatus.load(std::memory_order_acquire) != InitCUDAStatusEnum::Inited) {
-                // use cpu
-                cpu::hwc2chw<uint8_t, float, true>(h, w, c, src, dst, alpha); return;
+            if (h == 0 || w == 0 || c == 0 || src == nullptr || dst == nullptr) {
+                return;
             }
-            // use cuda
-            const size_t pixel_size = h * w * c;
-            const size_t input_size = pixel_size * sizeof(uint8_t);
-            const size_t output_size = pixel_size * sizeof(float);
-            CUdeviceptr cuda_input_memory = 0;
-            CUdeviceptr cuda_output_memory = 0;
-            // alloc device memory
-            CUresult cuRes0 = cuMemAlloc(&cuda_input_memory, input_size);
-            CUresult cuRes1 = cuMemAlloc(&cuda_output_memory, output_size);
-            if (cuRes0 != 0 || cuRes1 != 0) {
+            if constexpr (!isSupportedElementType<Stype, Dtype>()) {
+                // use cpu (the GPU kernels cover uint8_t and float element types)
+                cpu::hwc2chw<Stype, Dtype, HasAlpha, NeedClamp, NeedNormalizedMeanStds>(h, w, c, src, dst, alpha, min_v, max_v, mean, stds); return;
+            }
+            else {
+                if (initCUDAStatus.load(std::memory_order_acquire) != InitCUDAStatusEnum::Inited) {
+                    // use cpu
+                    cpu::hwc2chw<Stype, Dtype, HasAlpha, NeedClamp, NeedNormalizedMeanStds>(h, w, c, src, dst, alpha, min_v, max_v, mean, stds); return;
+                }
+                // use cuda
+                const size_t pixel_size = h * w * c;
+                const size_t input_size = pixel_size * sizeof(Stype);
+                const size_t output_size = pixel_size * sizeof(Dtype);
+                CUdeviceptr cuda_input_memory = 0;
+                CUdeviceptr cuda_output_memory = 0;
+                // alloc device memory
+                CUresult cuRes0 = cuMemAlloc(&cuda_input_memory, input_size);
+                CUresult cuRes1 = cuMemAlloc(&cuda_output_memory, output_size);
+                if (cuRes0 != 0 || cuRes1 != 0) {
+                    cuMemFree(cuda_input_memory);
+                    cuMemFree(cuda_output_memory);
+                    fallbackToCpuHwc2chw<Stype, Dtype, HasAlpha, NeedClamp, NeedNormalizedMeanStds>(h, w, c, src, dst, alpha, min_v, max_v, mean, stds, "CUDA hwc2chw GPU execution failed"); return;
+                }
+                // copy host memory to device memory
+                CUresult cuRes2 = cuMemcpyHtoD(cuda_input_memory, src, input_size);
+                if (cuRes2 != 0) {
+                    cuMemFree(cuda_input_memory);
+                    cuMemFree(cuda_output_memory);
+                    fallbackToCpuHwc2chw<Stype, Dtype, HasAlpha, NeedClamp, NeedNormalizedMeanStds>(h, w, c, src, dst, alpha, min_v, max_v, mean, stds, "CUDA hwc2chw GPU execution failed"); return;
+                }
+                // call cuda function
+                const bool launch_ok = launchHwc2chwKernel(h, w, c, cuda_input_memory, cuda_output_memory,
+                    isFloatElementType<Stype>(), isFloatElementType<Dtype>(),
+                    HasAlpha, NeedClamp, NeedNormalizedMeanStds,
+                    (float)alpha, (float)min_v, (float)max_v, mean, stds);
+                if (!launch_ok) {
+                    cuMemFree(cuda_input_memory);
+                    cuMemFree(cuda_output_memory);
+                    fallbackToCpuHwc2chw<Stype, Dtype, HasAlpha, NeedClamp, NeedNormalizedMeanStds>(h, w, c, src, dst, alpha, min_v, max_v, mean, stds, "CUDA hwc2chw GPU execution failed"); return;
+                }
+                // copy device memory to host memory; the synchronous copy also
+                // guarantees the kernel has finished before the function returns
+                CUresult cuRes4 = cuMemcpyDtoH(dst, cuda_output_memory, output_size);
+                if (cuRes4 != 0) {
+                    cuMemFree(cuda_input_memory);
+                    cuMemFree(cuda_output_memory);
+                    fallbackToCpuHwc2chw<Stype, Dtype, HasAlpha, NeedClamp, NeedNormalizedMeanStds>(h, w, c, src, dst, alpha, min_v, max_v, mean, stds, "CUDA hwc2chw GPU execution failed"); return;
+                }
                 cuMemFree(cuda_input_memory);
                 cuMemFree(cuda_output_memory);
-                fallbackToCpuHwc2chw(h, w, c, src, dst, alpha, "CUDA hwc2chw GPU execution failed"); return;
+                clearCallFailures();
+                return;
             }
-            // copy host memory to device memory
-            CUresult cuRes2 = cuMemcpyHtoD(cuda_input_memory, src, input_size);
-            if (cuRes2 != 0) {
-                cuMemFree(cuda_input_memory);
-                cuMemFree(cuda_output_memory);
-                fallbackToCpuHwc2chw(h, w, c, src, dst, alpha, "CUDA hwc2chw GPU execution failed"); return;
-            }
-            // call cuda function
-            if (hwc2chwCUDAFun == nullptr) {
-                cuMemFree(cuda_input_memory);
-                cuMemFree(cuda_output_memory);
-                fallbackToCpuHwc2chw(h, w, c, src, dst, alpha, "CUDA hwc2chw GPU execution failed"); return;
-            }
-            const unsigned int blockDimX = 32, blockDimY = 32, blockDimZ = 1;
-            const unsigned int gridDimX = ((unsigned int)w + blockDimX - 1) / blockDimX;
-            const unsigned int gridDimY = ((unsigned int)h + blockDimY - 1) / blockDimY;
-            const unsigned int gridDimZ = 1;
-            // for ready cuda kernel function(func_hwc2chw)
-            size_t arg_h_val = h;
-            size_t arg_w_val = w;
-            size_t arg_c_val = c;
-            float arg_alpha_val = alpha;
-            void* args1[] = { &arg_h_val, &arg_w_val, &arg_c_val, &cuda_input_memory, &cuda_output_memory, &arg_alpha_val };
-            CUresult cuRes3 = cuLaunchKernel(
-                hwc2chwCUDAFun, gridDimX, gridDimY, gridDimZ,
-                blockDimX, blockDimY, blockDimZ,
-                0, nullptr, args1, nullptr);
-            if (cuRes3 != 0) {
-                cuMemFree(cuda_input_memory);
-                cuMemFree(cuda_output_memory);
-                fallbackToCpuHwc2chw(h, w, c, src, dst, alpha, "CUDA hwc2chw GPU execution failed"); return;
-            }
-            // copy device memory to host memory; the synchronous copy also
-            // guarantees the kernel has finished before the function returns
-            CUresult cuRes4 = cuMemcpyDtoH(dst, cuda_output_memory, output_size);
-            if (cuRes4 != 0) {
-                cuMemFree(cuda_input_memory);
-                cuMemFree(cuda_output_memory);
-                fallbackToCpuHwc2chw(h, w, c, src, dst, alpha, "CUDA hwc2chw GPU execution failed"); return;
-            }
-            cuMemFree(cuda_input_memory);
-            cuMemFree(cuda_output_memory);
-            clearCallFailures();
-            return;
         }
 
         /**
         * @brief Converts image data from CHW format to HWC format
         *
+        * @tparam Stype Source data type
+        * @tparam Dtype Destination data type
+        * @tparam HasAlpha input alpha is requires participation in calculations
+        * @tparam NeedClamp input min_v and max_v are requires participation in calculations
         * @param c Number of channels
         * @param h Height of image
         * @param w Width of image
         * @param src Pointer to the source data in CHW format
         * @param dst Pointer to the destination data in HWC format
         * @param alpha Scaling factor
+        * @param min_v Minimum value for clamping
+        * @param max_v Maximum value for clamping
         */
+        template <typename Stype, typename Dtype,
+                  bool HasAlpha = false,
+                  bool NeedClamp = false>
         static void chw2hwc(
             const size_t c, const size_t h, const size_t w,
-            const float* src, uint8_t* dst,
-            const uint8_t alpha = 255.0f) {
+            const Stype* src, Dtype* dst,
+            const Dtype alpha = 1,
+            const Dtype min_v = 0, const Dtype max_v = 255) {
             nvidia();
-            if (initCUDAStatus.load(std::memory_order_acquire) != InitCUDAStatusEnum::Inited) {
-                // use cpu
-                cpu::chw2hwc<float, uint8_t, true, true>(c, h, w, src, dst, alpha); return;
+            if (c == 0 || h == 0 || w == 0 || src == nullptr || dst == nullptr) {
+                return;
             }
-            // use cuda
-            const size_t pixel_size = h * w * c;
-            const size_t input_size = pixel_size * sizeof(float);
-            const size_t output_size = pixel_size * sizeof(uint8_t);
-            CUdeviceptr cuda_input_memory = 0;
-            CUdeviceptr cuda_output_memory = 0;
-            // alloc device memory
-            CUresult cuRes0 = cuMemAlloc(&cuda_input_memory, input_size);
-            CUresult cuRes1 = cuMemAlloc(&cuda_output_memory, output_size);
-            if (cuRes0 != 0 || cuRes1 != 0) {
+            if constexpr (!isSupportedElementType<Stype, Dtype>()) {
+                // use cpu (the GPU kernels cover uint8_t and float element types)
+                cpu::chw2hwc<Stype, Dtype, HasAlpha, NeedClamp>(c, h, w, src, dst, alpha, min_v, max_v); return;
+            }
+            else {
+                if (initCUDAStatus.load(std::memory_order_acquire) != InitCUDAStatusEnum::Inited) {
+                    // use cpu
+                    cpu::chw2hwc<Stype, Dtype, HasAlpha, NeedClamp>(c, h, w, src, dst, alpha, min_v, max_v); return;
+                }
+                // use cuda
+                const size_t pixel_size = h * w * c;
+                const size_t input_size = pixel_size * sizeof(Stype);
+                const size_t output_size = pixel_size * sizeof(Dtype);
+                CUdeviceptr cuda_input_memory = 0;
+                CUdeviceptr cuda_output_memory = 0;
+                // alloc device memory
+                CUresult cuRes0 = cuMemAlloc(&cuda_input_memory, input_size);
+                CUresult cuRes1 = cuMemAlloc(&cuda_output_memory, output_size);
+                if (cuRes0 != 0 || cuRes1 != 0) {
+                    cuMemFree(cuda_input_memory);
+                    cuMemFree(cuda_output_memory);
+                    fallbackToCpuChw2hwc<Stype, Dtype, HasAlpha, NeedClamp>(c, h, w, src, dst, alpha, min_v, max_v, "CUDA chw2hwc GPU execution failed"); return;
+                }
+                // copy host memory to device memory
+                CUresult cuRes2 = cuMemcpyHtoD(cuda_input_memory, src, input_size);
+                if (cuRes2 != 0) {
+                    cuMemFree(cuda_input_memory);
+                    cuMemFree(cuda_output_memory);
+                    fallbackToCpuChw2hwc<Stype, Dtype, HasAlpha, NeedClamp>(c, h, w, src, dst, alpha, min_v, max_v, "CUDA chw2hwc GPU execution failed"); return;
+                }
+                // call cuda function
+                const bool launch_ok = launchChw2hwcKernel(c, h, w, cuda_input_memory, cuda_output_memory,
+                    isFloatElementType<Stype>(), isFloatElementType<Dtype>(),
+                    HasAlpha, NeedClamp,
+                    (float)alpha, (float)min_v, (float)max_v);
+                if (!launch_ok) {
+                    cuMemFree(cuda_input_memory);
+                    cuMemFree(cuda_output_memory);
+                    fallbackToCpuChw2hwc<Stype, Dtype, HasAlpha, NeedClamp>(c, h, w, src, dst, alpha, min_v, max_v, "CUDA chw2hwc GPU execution failed"); return;
+                }
+                // copy device memory to host memory; the synchronous copy also
+                // guarantees the kernel has finished before the function returns
+                CUresult cuRes4 = cuMemcpyDtoH(dst, cuda_output_memory, output_size);
+                if (cuRes4 != 0) {
+                    cuMemFree(cuda_input_memory);
+                    cuMemFree(cuda_output_memory);
+                    fallbackToCpuChw2hwc<Stype, Dtype, HasAlpha, NeedClamp>(c, h, w, src, dst, alpha, min_v, max_v, "CUDA chw2hwc GPU execution failed"); return;
+                }
                 cuMemFree(cuda_input_memory);
                 cuMemFree(cuda_output_memory);
-                fallbackToCpuChw2hwc(c, h, w, src, dst, alpha, "CUDA chw2hwc GPU execution failed"); return;
+                clearCallFailures();
+                return;
             }
-            // copy host memory to device memory
-            CUresult cuRes2 = cuMemcpyHtoD(cuda_input_memory, src, input_size);
-            if (cuRes2 != 0) {
-                cuMemFree(cuda_input_memory);
-                cuMemFree(cuda_output_memory);
-                fallbackToCpuChw2hwc(c, h, w, src, dst, alpha, "CUDA chw2hwc GPU execution failed"); return;
-            }
-            // call cuda function
-            if (chw2hwcCUDAFun == nullptr) {
-                cuMemFree(cuda_input_memory);
-                cuMemFree(cuda_output_memory);
-                fallbackToCpuChw2hwc(c, h, w, src, dst, alpha, "CUDA chw2hwc GPU execution failed"); return;
-            }
-            const unsigned int blockDimX = 32, blockDimY = 32, blockDimZ = 1;
-            const unsigned int gridDimX = ((unsigned int)w + blockDimX - 1) / blockDimX;
-            const unsigned int gridDimY = ((unsigned int)h + blockDimY - 1) / blockDimY;
-            const unsigned int gridDimZ = 1;
-            // for ready cuda kernel function(func_hwc2chw)
-            size_t arg_c_val = c;
-            size_t arg_h_val = h;
-            size_t arg_w_val = w;
-            uint8_t arg_alpha_val = alpha;
-            void* args[] = { &arg_c_val, &arg_h_val, &arg_w_val, &cuda_input_memory, &cuda_output_memory, &arg_alpha_val };
-            CUresult cuRes3 = cuLaunchKernel(
-                chw2hwcCUDAFun, gridDimX, gridDimY, gridDimZ,
-                blockDimX, blockDimY, blockDimZ,
-                0, nullptr, args, nullptr);
-            if (cuRes3 != 0) {
-                cuMemFree(cuda_input_memory);
-                cuMemFree(cuda_output_memory);
-                fallbackToCpuChw2hwc(c, h, w, src, dst, alpha, "CUDA chw2hwc GPU execution failed"); return;
-            }
-            // copy device memory to host memory; the synchronous copy also
-            // guarantees the kernel has finished before the function returns
-            CUresult cuRes4 = cuMemcpyDtoH(dst, cuda_output_memory, output_size);
-            if (cuRes4 != 0) {
-                cuMemFree(cuda_input_memory);
-                cuMemFree(cuda_output_memory);
-                fallbackToCpuChw2hwc(c, h, w, src, dst, alpha, "CUDA chw2hwc GPU execution failed"); return;
-            }
-            cuMemFree(cuda_input_memory);
-            cuMemFree(cuda_output_memory);
-            clearCallFailures();
-            return;
         }
 
 
         /**
         * @brief Converts image data from HWC format to CHW format
         *
+        * @tparam Stype Source data type
+        * @tparam Dtype Destination data type
+        * @tparam HasAlpha input alpha is requires participation in calculations
+        * @tparam NeedClamp input min_v and max_v are requires participation in calculations
+        * @tparam NeedNormalizedMeanStds input mean and stds are requires participation in calculations
         * @param h Height of image
         * @param w Width of image
         * @param c Number of channels
         * @param src Cuda Memory (uint8_t) Pointer to the source data in HWC format
         * @param dst Cuda Memory (float) Pointer to the destination data in CHW format
         * @param alpha Scaling factor
+        * @param min_v Minimum value for clamping
+        * @param max_v Maximum value for clamping
+        * @param mean Array of mean values for normalization
+        * @param stds Array of standard deviation values for normalization
         */
+        template <typename Stype, typename Dtype,
+                  bool HasAlpha = false,
+                  bool NeedClamp = false,
+                  bool NeedNormalizedMeanStds = false>
         static void hwc2chw(
             const size_t h, const size_t w, const size_t c,
             CUdeviceptr src, CUdeviceptr dst,
-            const float alpha = 1.f / 255.f) {
+            const Dtype alpha = 1,
+            const Dtype min_v = 0.0, const Dtype max_v = 1.0,
+            const std::array<float, 3> mean = { 0.485f, 0.456f, 0.406f },
+            const std::array<float, 3> stds = { 0.229f, 0.224f, 0.225f }) {
             nvidia();
-            if (initCUDAStatus.load(std::memory_order_acquire) != InitCUDAStatusEnum::Inited) {
-                setLastError("CUDA device-memory hwc2chw called before successful initialization.");
+            if (h == 0 || w == 0 || c == 0 || src == 0 || dst == 0) {
                 return;
             }
-            const size_t pixel_size = h * w * c;
-            const size_t input_size = pixel_size * sizeof(uint8_t);
-            const size_t output_size = pixel_size * sizeof(float);
-
-            const unsigned int blockDimX = 32, blockDimY = 32, blockDimZ = 1;
-            const unsigned int gridDimX = ((unsigned int)w + blockDimX - 1) / blockDimX;
-            const unsigned int gridDimY = ((unsigned int)h + blockDimY - 1) / blockDimY;
-            const unsigned int gridDimZ = 1;
-            // for ready cuda kernel function(func_hwc2chw)
-            size_t arg_h_val = h;
-            size_t arg_w_val = w;
-            size_t arg_c_val = c;
-            float arg_alpha_val = alpha;
-            void* args1[] = { &arg_h_val, &arg_w_val, &arg_c_val, &src, &dst, &arg_alpha_val };
-            CUresult cuRes0 = cuLaunchKernel(
-                hwc2chwCUDAFun, gridDimX, gridDimY, gridDimZ,
-                blockDimX, blockDimY, blockDimZ,
-                0, nullptr, args1, nullptr);
-            if (cuRes0 != 0) {
-                recordCallFailure("CUDA device-memory hwc2chw launch failed");
+            if constexpr (!isSupportedElementType<Stype, Dtype>()) {
+                setLastError("CUDA device-memory hwc2chw requires uint8_t/float element types.");
                 return;
             }
-            CUresult cuRes1 = cuCtxSynchronize();
-            if (cuRes1 != 0) {
-                recordCallFailure("CUDA device-memory hwc2chw synchronization failed");
+            else {
+                if (initCUDAStatus.load(std::memory_order_acquire) != InitCUDAStatusEnum::Inited) {
+                    setLastError("CUDA device-memory hwc2chw called before successful initialization.");
+                    return;
+                }
+                const bool launch_ok = launchHwc2chwKernel(h, w, c, src, dst,
+                    isFloatElementType<Stype>(), isFloatElementType<Dtype>(),
+                    HasAlpha, NeedClamp, NeedNormalizedMeanStds,
+                    (float)alpha, (float)min_v, (float)max_v, mean, stds);
+                if (!launch_ok) {
+                    recordCallFailure("CUDA device-memory hwc2chw launch failed");
+                    return;
+                }
+                CUresult cuRes1 = cuCtxSynchronize();
+                if (cuRes1 != 0) {
+                    recordCallFailure("CUDA device-memory hwc2chw synchronization failed");
+                    return;
+                }
+                clearCallFailures();
                 return;
             }
-            clearCallFailures();
-            return;
         }
 
         /**
         * @brief Converts image data from CHW format to HWC format
         *
+        * @tparam Stype Source data type
+        * @tparam Dtype Destination data type
+        * @tparam HasAlpha input alpha is requires participation in calculations
+        * @tparam NeedClamp input min_v and max_v are requires participation in calculations
         * @param c Number of channels
         * @param h Height of image
         * @param w Width of image
         * @param src Cuda Memory (float) Pointer to the source data in CHW format
         * @param dst Cuda Memory (uint8_t) Pointer to the destination data in HWC format
         * @param alpha Scaling factor
+        * @param min_v Minimum value for clamping
+        * @param max_v Maximum value for clamping
         */
+        template <typename Stype, typename Dtype,
+                  bool HasAlpha = false,
+                  bool NeedClamp = false>
         static void chw2hwc(
             const size_t c, const size_t h, const size_t w,
             CUdeviceptr src, CUdeviceptr dst,
-            const uint8_t alpha = 255.0f) {
+            const Dtype alpha = 1,
+            const Dtype min_v = 0, const Dtype max_v = 255) {
             nvidia();
-            if (initCUDAStatus.load(std::memory_order_acquire) != InitCUDAStatusEnum::Inited) {
-                setLastError("CUDA device-memory chw2hwc called before successful initialization.");
+            if (c == 0 || h == 0 || w == 0 || src == 0 || dst == 0) {
                 return;
+            }
+            if constexpr (!isSupportedElementType<Stype, Dtype>()) {
+                setLastError("CUDA device-memory chw2hwc requires uint8_t/float element types.");
+                return;
+            }
+            else {
+                if (initCUDAStatus.load(std::memory_order_acquire) != InitCUDAStatusEnum::Inited) {
+                    setLastError("CUDA device-memory chw2hwc called before successful initialization.");
+                    return;
+                }
+                const bool launch_ok = launchChw2hwcKernel(c, h, w, src, dst,
+                    isFloatElementType<Stype>(), isFloatElementType<Dtype>(),
+                    HasAlpha, NeedClamp,
+                    (float)alpha, (float)min_v, (float)max_v);
+                if (!launch_ok) {
+                    recordCallFailure("CUDA device-memory chw2hwc launch failed");
+                    return;
+                }
+                CUresult cuRes1 = cuCtxSynchronize();
+                if (cuRes1 != 0) {
+                    recordCallFailure("CUDA device-memory chw2hwc synchronization failed");
+                    return;
+                }
+                clearCallFailures();
+                return;
+            }
+        }
+    private:
+        // The GPU kernels cover uint8_t and float element types; every other
+        // Stype/Dtype combination keeps full CPU behavior via the fallback path.
+        template <typename Stype, typename Dtype>
+        static constexpr bool isSupportedElementType() {
+            return (std::is_same<Stype, uint8_t>::value || std::is_same<Stype, float>::value) &&
+                   (std::is_same<Dtype, uint8_t>::value || std::is_same<Dtype, float>::value);
+        }
+
+        template <typename Type>
+        static constexpr bool isFloatElementType() {
+            return std::is_same<Type, float>::value;
+        }
+
+        static bool launchHwc2chwKernel(
+            const size_t h, const size_t w, const size_t c,
+            const CUdeviceptr src, const CUdeviceptr dst,
+            const bool src_is_float, const bool dst_is_float,
+            const bool has_alpha, const bool need_clamp, const bool need_norm,
+            const float alpha, const float min_v, const float max_v,
+            const std::array<float, 3>& mean, const std::array<float, 3>& stds)
+        {
+            if (hwc2chwCUDAFun == nullptr) {
+                return false;
             }
             const unsigned int blockDimX = 32, blockDimY = 32, blockDimZ = 1;
             const unsigned int gridDimX = ((unsigned int)w + blockDimX - 1) / blockDimX;
             const unsigned int gridDimY = ((unsigned int)h + blockDimY - 1) / blockDimY;
             const unsigned int gridDimZ = 1;
             // for ready cuda kernel function(func_hwc2chw)
+            size_t arg_h_val = h;
+            size_t arg_w_val = w;
+            size_t arg_c_val = c;
+            CUdeviceptr arg_src_val = src;
+            CUdeviceptr arg_dst_val = dst;
+            int arg_src_is_float_val = src_is_float ? 1 : 0;
+            int arg_dst_is_float_val = dst_is_float ? 1 : 0;
+            int arg_has_alpha_val = has_alpha ? 1 : 0;
+            int arg_need_clamp_val = need_clamp ? 1 : 0;
+            int arg_need_norm_val = need_norm ? 1 : 0;
+            float arg_alpha_val = alpha;
+            float arg_min_v_val = min_v;
+            float arg_max_v_val = max_v;
+            float arg_mean0_val = mean[0];
+            float arg_mean1_val = mean[1];
+            float arg_mean2_val = mean[2];
+            float arg_std0_val = stds[0];
+            float arg_std1_val = stds[1];
+            float arg_std2_val = stds[2];
+            void* args[] = {
+                &arg_h_val, &arg_w_val, &arg_c_val, &arg_src_val, &arg_dst_val,
+                &arg_src_is_float_val, &arg_dst_is_float_val, &arg_has_alpha_val,
+                &arg_need_clamp_val, &arg_need_norm_val,
+                &arg_alpha_val, &arg_min_v_val, &arg_max_v_val,
+                &arg_mean0_val, &arg_mean1_val, &arg_mean2_val,
+                &arg_std0_val, &arg_std1_val, &arg_std2_val };
+            CUresult cuRes = cuLaunchKernel(
+                hwc2chwCUDAFun, gridDimX, gridDimY, gridDimZ,
+                blockDimX, blockDimY, blockDimZ,
+                0, nullptr, args, nullptr);
+            return cuRes == 0;
+        }
+
+        static bool launchChw2hwcKernel(
+            const size_t c, const size_t h, const size_t w,
+            const CUdeviceptr src, const CUdeviceptr dst,
+            const bool src_is_float, const bool dst_is_float,
+            const bool has_alpha, const bool need_clamp,
+            const float alpha, const float min_v, const float max_v)
+        {
+            if (chw2hwcCUDAFun == nullptr) {
+                return false;
+            }
+            const unsigned int blockDimX = 32, blockDimY = 32, blockDimZ = 1;
+            const unsigned int gridDimX = ((unsigned int)w + blockDimX - 1) / blockDimX;
+            const unsigned int gridDimY = ((unsigned int)h + blockDimY - 1) / blockDimY;
+            const unsigned int gridDimZ = 1;
+            // for ready cuda kernel function(func_chw2hwc)
             size_t arg_c_val = c;
             size_t arg_h_val = h;
             size_t arg_w_val = w;
-            uint8_t arg_alpha_val = alpha;
-            void* args[] = { &arg_c_val, &arg_h_val, &arg_w_val, &src, &dst, &arg_alpha_val };
-            CUresult cuRes0 = cuLaunchKernel(
+            CUdeviceptr arg_src_val = src;
+            CUdeviceptr arg_dst_val = dst;
+            int arg_src_is_float_val = src_is_float ? 1 : 0;
+            int arg_dst_is_float_val = dst_is_float ? 1 : 0;
+            int arg_has_alpha_val = has_alpha ? 1 : 0;
+            int arg_need_clamp_val = need_clamp ? 1 : 0;
+            float arg_alpha_val = alpha;
+            float arg_min_v_val = min_v;
+            float arg_max_v_val = max_v;
+            void* args[] = {
+                &arg_c_val, &arg_h_val, &arg_w_val, &arg_src_val, &arg_dst_val,
+                &arg_src_is_float_val, &arg_dst_is_float_val, &arg_has_alpha_val,
+                &arg_need_clamp_val,
+                &arg_alpha_val, &arg_min_v_val, &arg_max_v_val };
+            CUresult cuRes = cuLaunchKernel(
                 chw2hwcCUDAFun, gridDimX, gridDimY, gridDimZ,
                 blockDimX, blockDimY, blockDimZ,
                 0, nullptr, args, nullptr);
-            if (cuRes0 != 0) {
-                recordCallFailure("CUDA device-memory chw2hwc launch failed");
-                return;
-            }
-            CUresult cuRes1 = cuCtxSynchronize();
-            if (cuRes1 != 0) {
-                recordCallFailure("CUDA device-memory chw2hwc synchronization failed");
-                return;
-            }
-            clearCallFailures();
-            return;
-        }
-    private:
-        // GPU and CPU fallback kernels clamp float->uint8 values before the
-        // narrow.  This avoids undefined behavior and keeps results identical.
-        static void fallbackToCpuHwc2chw(size_t h, size_t w, size_t c,
-            const uint8_t* src, float* dst, float alpha, const char* message)
-        {
-            recordCallFailure(message);
-            cpu::hwc2chw<uint8_t, float, true>(h, w, c, src, dst, alpha);
+            return cuRes == 0;
         }
 
-        static void fallbackToCpuChw2hwc(size_t c, size_t h, size_t w,
-            const float* src, uint8_t* dst, uint8_t alpha, const char* message)
+        // GPU and CPU fallback kernels clamp float->uint8 values before the
+        // narrow.  This avoids undefined behavior and keeps results identical.
+        template <typename Stype, typename Dtype,
+                  bool HasAlpha, bool NeedClamp, bool NeedNormalizedMeanStds>
+        static void fallbackToCpuHwc2chw(size_t h, size_t w, size_t c,
+            const Stype* src, Dtype* dst, const Dtype alpha,
+            const Dtype min_v, const Dtype max_v,
+            const std::array<float, 3>& mean, const std::array<float, 3>& stds,
+            const char* message)
         {
             recordCallFailure(message);
-            cpu::chw2hwc<float, uint8_t, true, true>(c, h, w, src, dst, alpha);
+            cpu::hwc2chw<Stype, Dtype, HasAlpha, NeedClamp, NeedNormalizedMeanStds>(h, w, c, src, dst, alpha, min_v, max_v, mean, stds);
+        }
+
+        template <typename Stype, typename Dtype,
+                  bool HasAlpha, bool NeedClamp>
+        static void fallbackToCpuChw2hwc(size_t c, size_t h, size_t w,
+            const Stype* src, Dtype* dst, const Dtype alpha,
+            const Dtype min_v, const Dtype max_v,
+            const char* message)
+        {
+            recordCallFailure(message);
+            cpu::chw2hwc<Stype, Dtype, HasAlpha, NeedClamp>(c, h, w, src, dst, alpha, min_v, max_v);
         }
 
         static void setLastError(const std::string& message)
